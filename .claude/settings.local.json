@@ -15,7 +15,12 @@
       "Bash(PATH=\"$PATH:/c/Users/morit/.cargo/bin\" npx tauri build)",
       "Bash(taskkill.exe /f /im flashbang.exe)",
       "Bash(cmd.exe /c \"taskkill /f /im flashbang.exe\")",
-      "Bash(/c/Users/morit/.cargo/bin/cargo.exe check --manifest-path /c/DEV/Flashbang/src-tauri/Cargo.toml)"
+      "Bash(/c/Users/morit/.cargo/bin/cargo.exe check --manifest-path /c/DEV/Flashbang/src-tauri/Cargo.toml)",
+      "Bash(pnpm install)",
+      "Bash(pnpm add -D tailwindcss @tailwindcss/vite)",
+      "Bash(pnpm approve-builds esbuild)",
+      "Bash(node -e \":*)",
+      "Bash(pnpm build)"
     ]
   }
 }

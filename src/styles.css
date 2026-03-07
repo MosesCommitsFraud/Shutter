@@ -1,3 +1,10 @@
+@import "tailwindcss";
+
+@theme {
+    --color-accent: #22d3ee;
+    --color-accent-dim: rgba(34, 211, 238, 0.15);
+}
+
 :root {
     color-scheme: dark;
     font-family:
@@ -18,8 +25,8 @@
     --text-primary: #eeeeee;
     --text-secondary: #888888;
     --text-tertiary: #555555;
-    --accent: #ffbf64;
-    --accent-dim: rgba(255, 191, 100, 0.15);
+    --accent: #22d3ee;
+    --accent-dim: rgba(34, 211, 238, 0.15);
     --radius-window: 12px;
     --radius-item: 8px;
     --radius-input: 8px;
@@ -660,7 +667,7 @@ button {
     background:
         radial-gradient(
             circle at top,
-            rgba(255, 191, 100, 0.12),
+            rgba(34, 211, 238, 0.12),
             transparent 32%
         ),
         rgba(10, 10, 12, 0.98);
@@ -1107,8 +1114,8 @@ button {
 
 .selection-box {
     position: fixed;
-    border: 2px solid rgba(255, 191, 100, 0.9);
-    background: rgba(255, 191, 100, 0.06);
+    border: 2px solid rgba(34, 211, 238, 0.9);
+    background: rgba(34, 211, 238, 0.06);
     pointer-events: none;
 }
 
@@ -1129,8 +1136,8 @@ button {
     left: 14px;
     width: 22px;
     height: 22px;
-    border-top: 2px solid rgba(255, 191, 100, 0.8);
-    border-left: 2px solid rgba(255, 191, 100, 0.8);
+    border-top: 2px solid rgba(34, 211, 238, 0.8);
+    border-left: 2px solid rgba(34, 211, 238, 0.8);
     opacity: 0.7;
 }
 
