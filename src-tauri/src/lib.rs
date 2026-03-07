@@ -18,6 +18,8 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use uuid::Uuid;
+#[cfg(target_os = "windows")]
+use window_vibrancy::apply_acrylic;
 use x_win::{get_active_window, get_open_windows, WindowInfo};
 use xcap::{Monitor, Window};
 
@@ -99,6 +101,14 @@ fn hide_main_window(app: &AppHandle<Wry>) -> Result<(), String> {
         .ok_or_else(|| String::from("Main window is unavailable"))?;
     window.hide().map_err(app_err)
 }
+
+#[cfg(target_os = "windows")]
+fn apply_main_window_vibrancy(window: &WebviewWindow<Wry>) {
+    let _ = apply_acrylic(window, Some((25, 26, 28, 220)));
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_main_window_vibrancy(_window: &WebviewWindow<Wry>) {}
 
 fn slugify(input: &str) -> String {
     let mut output = String::new();
@@ -1025,6 +1035,8 @@ pub fn run() {
             setup_tray(app.handle())?;
 
             if let Some(main_window) = app.get_webview_window(MAIN_LABEL) {
+                apply_main_window_vibrancy(&main_window);
+
                 #[cfg(target_os = "macos")]
                 {
                     main_window.set_shadow(true)?;

@@ -1346,6 +1346,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tokio",
  "uuid",
+ "window-vibrancy",
  "x-win",
  "xcap",
 ]
