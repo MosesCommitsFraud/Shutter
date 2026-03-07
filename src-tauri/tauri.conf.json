@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "Flashbang",
-        "width": 1180,
-        "height": 760,
-        "minWidth": 980,
-        "minHeight": 620,
+        "width": 750,
+        "height": 500,
+        "minWidth": 680,
+        "minHeight": 460,
         "decorations": false,
         "visible": false,
         "center": true

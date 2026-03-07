@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.raycast.com)",
+      "WebFetch(domain:developers.raycast.com)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(npx tauri build --no-bundle)",
+      "Bash(cargo check --manifest-path src-tauri/Cargo.toml)",
+      "Bash(\"$USERPROFILE/.cargo/bin/cargo.exe\" check --manifest-path src-tauri/Cargo.toml)",
+      "Bash(/c/Users/morit/.cargo/bin/cargo.exe check --manifest-path src-tauri/Cargo.toml)",
+      "Bash(npx vite build)",
+      "Bash(PATH=\"/c/Users/morit/.cargo/bin:$PATH\" npx tauri build)",
+      "Bash(export PATH=\"/c/Users/morit/.cargo/bin:/c/Program Files/nodejs:$PATH\")",
+      "Bash(npx tauri build)",
+      "Bash(PATH=\"$PATH:/c/Users/morit/.cargo/bin\" npx tauri build)",
+      "Bash(taskkill.exe /f /im flashbang.exe)",
+      "Bash(cmd.exe /c \"taskkill /f /im flashbang.exe\")"
+    ]
+  }
+}

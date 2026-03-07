@@ -13,7 +13,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
 
 type CaptureKind = "display" | "region";
-type ManagerTab = "shots" | "focus" | "settings";
+type ManagerTab = "shots" | "settings";
 type HotkeyTarget = "capture" | "region" | null;
 
 type AppConfig = {
@@ -90,36 +90,11 @@ type Rect = {
   height: number;
 };
 
-const PAGE_SIZE = 6;
+const PAGE_SIZE = 50;
 const previewCache = new Map<string, string>();
 const currentWebview = getCurrentWebviewWindow();
 const currentWindow = getCurrentWindow();
 const viewLabel = currentWebview.label;
-
-function WindowIcon(props: { kind: "minimize" | "maximize" | "close" }) {
-  if (props.kind === "minimize") {
-    return (
-      <svg viewBox="0 0 12 12" aria-hidden="true">
-        <path d="M2 6.5h8" />
-      </svg>
-    );
-  }
-
-  if (props.kind === "maximize") {
-    return (
-      <svg viewBox="0 0 12 12" aria-hidden="true">
-        <rect x="2.25" y="2.25" width="7.5" height="7.5" rx="0.6" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg viewBox="0 0 12 12" aria-hidden="true">
-      <path d="M3 3l6 6" />
-      <path d="M9 3L3 9" />
-    </svg>
-  );
-}
 
 function normalizeRect(
   startX: number,
@@ -140,14 +115,6 @@ function formatTimestamp(timestamp: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(timestamp));
-}
-
-function titleFromRecord(record: ScreenshotRecord | null): string {
-  if (!record) {
-    return "No capture selected";
-  }
-
-  return record.activeWindow?.title || record.fileName;
 }
 
 function acceleratorFromEvent(event: KeyboardEvent): string | null {
@@ -263,25 +230,53 @@ function usePreviewImage(
   return src;
 }
 
-function PreviewImage(props: {
-  path: string | null;
-  alt: string;
-  className: string;
-  maxWidth: number;
-  maxHeight: number;
-  placeholderLabel: string;
-}) {
-  const src = usePreviewImage(props.path, props.maxWidth, props.maxHeight);
+function ListThumb(props: { path: string | null; app: string }) {
+  const src = usePreviewImage(props.path, 96, 64);
 
   if (!src) {
     return (
-      <div className={`${props.className} preview-placeholder`}>
-        <span>{props.placeholderLabel}</span>
+      <div className="list-item__thumb-placeholder">
+        <span>{props.app.slice(0, 2)}</span>
       </div>
     );
   }
 
-  return <img className={props.className} src={src} alt={props.alt} />;
+  return <img className="list-item__thumb" src={src} alt="" />;
+}
+
+function DetailPreview(props: { path: string | null; alt: string }) {
+  const src = usePreviewImage(props.path, 860, 520);
+
+  if (!src) {
+    return (
+      <div className="detail-preview-placeholder">
+        <span>No preview</span>
+      </div>
+    );
+  }
+
+  return <img className="detail-preview" src={src} alt={props.alt} />;
+}
+
+function FlashPreviewImage(props: { path: string | null }) {
+  const src = usePreviewImage(props.path, 480, 280);
+
+  if (!src) {
+    return null;
+  }
+
+  return <img className="flash-card__image" src={src} alt="" />;
+}
+
+function SearchIcon() {
+  return (
+    <div className="search-header__icon">
+      <svg viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="7" />
+        <path d="M16 16l5 5" />
+      </svg>
+    </div>
+  );
 }
 
 function FlashOverlay() {
@@ -326,14 +321,7 @@ function FlashOverlay() {
         }}
       />
       <div className="flash-card">
-        <PreviewImage
-          path={payload.filePath}
-          alt=""
-          className="flash-card__image"
-          maxWidth={480}
-          maxHeight={280}
-          placeholderLabel="Preview"
-        />
+        <FlashPreviewImage path={payload.filePath} />
         <div className="flash-card__meta">
           <span>{payload.primaryApp}</span>
           <span>{payload.captureKind === "region" ? "Area" : "Display"}</span>
@@ -706,401 +694,351 @@ function ManagerApp() {
     }
   };
 
-  const pageLabel =
-    filteredScreenshots.length === 0
-      ? "0 / 0"
-      : `${pageIndex + 1} / ${totalPages}`;
-
   return (
     <div className="window-shell">
-      <header className="titlebar">
-        <div className="titlebar__brand" data-tauri-drag-region>
-          <span className="brand-mark" />
-          <div>
-            <strong>Flashbang</strong>
-            <span>Resident capture manager</span>
-          </div>
-        </div>
-
-        <nav className="titlebar__tabs">
-          <button
-            className={`tab-chip ${activeTab === "shots" ? "tab-chip--active" : ""}`}
-            onClick={() => setActiveTab("shots")}
+      {/* ── Search Header ── */}
+      <div className="search-header" data-tauri-drag-region>
+        <SearchIcon />
+        <input
+          className="search-header__input"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search captures..."
+        />
+        {activeTab === "shots" ? (
+          <select
+            className="search-header__filter"
+            value={activeProgram}
+            onChange={(event) => setActiveProgram(event.target.value)}
           >
-            Shots
-          </button>
+            {programs.map((program) => (
+              <option key={program} value={program}>
+                {program}
+              </option>
+            ))}
+          </select>
+        ) : null}
+        <div className="window-controls">
           <button
-            className={`tab-chip ${activeTab === "focus" ? "tab-chip--active" : ""}`}
-            onClick={() => setActiveTab("focus")}
-          >
-            Focus
-          </button>
-          <button
-            className={`tab-chip ${activeTab === "settings" ? "tab-chip--active" : ""}`}
-            onClick={() => setActiveTab("settings")}
-          >
-            Settings
-          </button>
-        </nav>
-
-        <div className="titlebar__actions">
-          <button
-            className="tool-button tool-button--solid"
-            onClick={() => void invoke("capture_now")}
-          >
-            Capture
-          </button>
-          <button
-            className="tool-button"
-            onClick={() => void invoke("begin_region_capture")}
-          >
-            Area
-          </button>
-          <button
-            className="window-button"
+            className="window-btn"
             onClick={() => void currentWindow.minimize()}
           >
-            <WindowIcon kind="minimize" />
+            <svg viewBox="0 0 12 12"><path d="M2 6h8" /></svg>
           </button>
           <button
-            className="window-button"
+            className="window-btn"
             onClick={() => void currentWindow.toggleMaximize()}
           >
-            <WindowIcon kind="maximize" />
+            <svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="0.5" /></svg>
           </button>
           <button
-            className="window-button window-button--close"
+            className="window-btn window-btn--close"
             onClick={() => void currentWindow.close()}
           >
-            <WindowIcon kind="close" />
+            <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
           </button>
         </div>
-      </header>
+      </div>
 
-      <main className="workspace">
+      {/* ── Tab Bar ── */}
+      <div className="tab-bar">
+        <button
+          className={`tab-bar__item ${activeTab === "shots" ? "tab-bar__item--active" : ""}`}
+          onClick={() => setActiveTab("shots")}
+        >
+          Shots
+        </button>
+        <button
+          className={`tab-bar__item ${activeTab === "settings" ? "tab-bar__item--active" : ""}`}
+          onClick={() => setActiveTab("settings")}
+        >
+          Settings
+        </button>
+        <div className="tab-bar__spacer" />
+        <button
+          className="tab-bar__action"
+          onClick={() => void invoke("capture_now")}
+        >
+          Capture
+        </button>
+        <button
+          className="tab-bar__action tab-bar__action--ghost"
+          onClick={() => void invoke("begin_region_capture")}
+        >
+          Area
+        </button>
+      </div>
+
+      {/* ── Content ── */}
+      <div className="content-area">
         {activeTab === "shots" ? (
-          <section className="panel-grid">
-            <section className="pane pane--gallery">
-              <div className="toolbar-row">
-                <input
-                  className="compact-input compact-input--search"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search files, apps, tags"
-                />
-                <select
-                  className="compact-select"
-                  value={activeProgram}
-                  onChange={(event) => setActiveProgram(event.target.value)}
+          <div className="shots-layout">
+            <div className="shots-list">
+              {pageItems.map((record) => (
+                <button
+                  key={record.id}
+                  className={`list-item ${selectedRecord?.id === record.id ? "list-item--selected" : ""}`}
+                  onClick={() => setSelectedId(record.id)}
                 >
-                  {programs.map((program) => (
-                    <option key={program} value={program}>
-                      {program}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="thumb-grid">
-                {pageItems.map((record) => (
-                  <button
-                    key={record.id}
-                    className={`thumb-card ${selectedRecord?.id === record.id ? "thumb-card--active" : ""}`}
-                    onClick={() => setSelectedId(record.id)}
-                  >
-                    <PreviewImage
-                      path={record.filePath}
-                      alt={record.fileName}
-                      className="thumb-card__image"
-                      maxWidth={360}
-                      maxHeight={220}
-                      placeholderLabel={record.primaryApp}
-                    />
-                    <div className="thumb-card__meta">
-                      <strong>{record.primaryApp}</strong>
-                      <span>
-                        {record.captureKind === "region" ? "Area" : "Display"}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-
-                {!pageItems.length ? (
-                  <div className="empty-panel">
-                    <strong>No captures</strong>
-                    <span>Take a screenshot or change the filters.</span>
+                  <ListThumb path={record.filePath} app={record.primaryApp} />
+                  <div className="list-item__info">
+                    <span className="list-item__title">
+                      {record.activeWindow?.title || record.primaryApp}
+                    </span>
+                    <span className="list-item__subtitle">
+                      {record.primaryApp} &middot;{" "}
+                      {formatTimestamp(record.createdAt)}
+                    </span>
                   </div>
-                ) : null}
-              </div>
+                  <span className="list-item__badge">
+                    {record.captureKind === "region" ? "Area" : "Full"}
+                  </span>
+                </button>
+              ))}
 
-              <div className="pager-row">
-                <span>{filteredScreenshots.length} matches</span>
-                <div className="pager-controls">
-                  <button
-                    className="tool-button"
-                    disabled={pageIndex === 0}
-                    onClick={() =>
-                      setPageIndex((current) => Math.max(0, current - 1))
-                    }
-                  >
-                    Prev
-                  </button>
-                  <span className="pager-label">{pageLabel}</span>
-                  <button
-                    className="tool-button"
-                    disabled={pageIndex >= totalPages - 1}
-                    onClick={() =>
-                      setPageIndex((current) =>
-                        Math.min(totalPages - 1, current + 1),
-                      )
-                    }
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            <aside className="pane pane--preview">
-              <PreviewImage
-                path={selectedRecord?.filePath ?? null}
-                alt={selectedRecord?.fileName ?? "No capture selected"}
-                className="hero-preview"
-                maxWidth={860}
-                maxHeight={520}
-                placeholderLabel="Preview"
-              />
-
-              <div className="info-strip">
-                <div>
-                  <strong>{selectedRecord?.primaryApp ?? "No app"}</strong>
-                  <span>{titleFromRecord(selectedRecord)}</span>
-                </div>
-                <div>
-                  <strong>
-                    {selectedRecord
-                      ? `${selectedRecord.width} x ${selectedRecord.height}`
-                      : "--"}
-                  </strong>
-                  <span>
-                    {selectedRecord
-                      ? formatTimestamp(selectedRecord.createdAt)
-                      : "Select a capture"}
+              {!pageItems.length ? (
+                <div className="empty-state">
+                  <span className="empty-state__title">No captures</span>
+                  <span className="empty-state__desc">
+                    Take a screenshot or change filters.
                   </span>
                 </div>
-              </div>
+              ) : null}
+            </div>
 
-              <div className="action-row">
-                <button
-                  className="tool-button"
-                  disabled={!selectedRecord}
-                  onClick={() =>
-                    selectedRecord
-                      ? void invoke("open_screenshot", {
-                          path: selectedRecord.filePath,
-                        })
-                      : undefined
-                  }
-                >
-                  Open
-                </button>
-                <button
-                  className="tool-button"
-                  disabled={!selectedRecord}
-                  onClick={() =>
-                    selectedRecord
-                      ? void invoke("reveal_screenshot", {
-                          path: selectedRecord.filePath,
-                        })
-                      : undefined
-                  }
-                >
-                  Reveal
-                </button>
-                <button
-                  className="tool-button"
-                  onClick={() => setActiveTab("focus")}
-                  disabled={!selectedRecord}
-                >
-                  Details
-                </button>
-              </div>
-            </aside>
-          </section>
-        ) : null}
+            <div className="detail-pane">
+              {selectedRecord ? (
+                <>
+                  <DetailPreview
+                    path={selectedRecord.filePath}
+                    alt={selectedRecord.fileName}
+                  />
 
-        {activeTab === "focus" ? (
-          <section className="panel-grid panel-grid--focus">
-            <section className="pane">
-              <div className="section-head">
-                <h2>Selected Capture</h2>
-                <span>
-                  {selectedRecord
-                    ? formatTimestamp(selectedRecord.createdAt)
-                    : "Nothing selected"}
-                </span>
-              </div>
-
-              <PreviewImage
-                path={selectedRecord?.filePath ?? null}
-                alt={selectedRecord?.fileName ?? "No capture selected"}
-                className="detail-preview"
-                maxWidth={640}
-                maxHeight={380}
-                placeholderLabel="Preview"
-              />
-
-              <div className="detail-grid">
-                <div className="stat-box">
-                  <span>Program</span>
-                  <strong>{selectedRecord?.primaryApp ?? "--"}</strong>
-                </div>
-                <div className="stat-box">
-                  <span>Capture</span>
-                  <strong>{selectedRecord?.captureKind ?? "--"}</strong>
-                </div>
-                <div className="stat-box">
-                  <span>Display</span>
-                  <strong>{selectedRecord?.display.name ?? "--"}</strong>
-                </div>
-                <div className="stat-box">
-                  <span>Windows</span>
-                  <strong>{selectedRecord?.visibleWindows.length ?? 0}</strong>
-                </div>
-              </div>
-            </section>
-
-            <section className="pane">
-              <div className="section-head">
-                <h2>Tags and Context</h2>
-                <button
-                  className="tool-button"
-                  onClick={saveTags}
-                  disabled={!selectedRecord}
-                >
-                  Save Tags
-                </button>
-              </div>
-
-              <label className="inline-field">
-                <span>Tags</span>
-                <input
-                  className="compact-input"
-                  value={tagsDraft}
-                  onChange={(event) => setTagsDraft(event.target.value)}
-                  placeholder="boss-fight, hud, cinematic"
-                />
-              </label>
-
-              <div className="window-list">
-                {(selectedRecord?.visibleWindows.slice(0, 6) ?? []).map(
-                  (window) => (
-                    <article
-                      key={`${selectedRecord?.id}-${window.id}`}
-                      className="window-row"
-                    >
-                      <strong>{window.appName || "Unknown app"}</strong>
-                      <span>{window.title || "Untitled window"}</span>
-                      <em>
-                        {window.isFocused
-                          ? "Focused"
-                          : window.isFullscreen
-                            ? "Fullscreen"
-                            : window.isMaximized
-                              ? "Maximized"
-                              : "Visible"}
-                      </em>
-                    </article>
-                  ),
-                )}
-
-                {!selectedRecord?.visibleWindows.length ? (
-                  <div className="empty-panel empty-panel--compact">
-                    <strong>No window context</strong>
-                    <span>Choose a capture from the Shots tab.</span>
+                  <div className="detail-meta">
+                    <div className="detail-meta__item">
+                      <span className="detail-meta__label">Application</span>
+                      <span className="detail-meta__value">
+                        {selectedRecord.primaryApp}
+                      </span>
+                    </div>
+                    <div className="detail-meta__item">
+                      <span className="detail-meta__label">Dimensions</span>
+                      <span className="detail-meta__value">
+                        {selectedRecord.width} x {selectedRecord.height}
+                      </span>
+                    </div>
+                    <div className="detail-meta__item">
+                      <span className="detail-meta__label">Display</span>
+                      <span className="detail-meta__value">
+                        {selectedRecord.display.name}
+                      </span>
+                    </div>
+                    <div className="detail-meta__item">
+                      <span className="detail-meta__label">Captured</span>
+                      <span className="detail-meta__value">
+                        {formatTimestamp(selectedRecord.createdAt)}
+                      </span>
+                    </div>
                   </div>
-                ) : null}
-              </div>
-            </section>
-          </section>
+
+                  <div className="tags-section">
+                    <span className="tags-section__label">Tags</span>
+                    <div className="tags-section__input-row">
+                      <input
+                        className="tags-section__input"
+                        value={tagsDraft}
+                        onChange={(event) => setTagsDraft(event.target.value)}
+                        placeholder="boss-fight, hud, cinematic"
+                      />
+                      <button className="tags-section__save" onClick={saveTags}>
+                        Save
+                      </button>
+                    </div>
+                  </div>
+
+                  {selectedRecord.visibleWindows.length > 0 ? (
+                    <div className="windows-section">
+                      <span className="windows-section__label">
+                        Visible Windows
+                      </span>
+                      {selectedRecord.visibleWindows.slice(0, 5).map((w) => (
+                        <div
+                          key={`${selectedRecord.id}-${w.id}`}
+                          className="window-row"
+                        >
+                          <span className="window-row__app">
+                            {w.appName || "Unknown"}
+                          </span>
+                          <span className="window-row__title">
+                            {w.title || "Untitled"}
+                          </span>
+                          <span className="window-row__state">
+                            {w.isFocused
+                              ? "Focused"
+                              : w.isFullscreen
+                                ? "Fullscreen"
+                                : w.isMaximized
+                                  ? "Maximized"
+                                  : "Visible"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="empty-state">
+                  <span className="empty-state__title">No capture selected</span>
+                  <span className="empty-state__desc">
+                    Select a capture from the list or take a new one.
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
         ) : null}
 
         {activeTab === "settings" ? (
-          <section className="panel-grid panel-grid--settings">
-            <section className="pane">
-              <div className="section-head">
-                <h2>Storage</h2>
-                <button className="tool-button" onClick={chooseFolder}>
-                  Choose Folder
+          <div className="settings-layout">
+            <div className="settings-group">
+              <span className="settings-group__title">Storage</span>
+              <div className="settings-row">
+                <div className="settings-row__info">
+                  <span className="settings-row__label">Save directory</span>
+                  <span className="settings-row__value settings-row__value--accent">
+                    {data?.config.saveDir || "Not configured"}
+                  </span>
+                </div>
+                <button className="settings-btn" onClick={chooseFolder}>
+                  Choose
                 </button>
               </div>
-
-              <div className="setting-box">
-                <span>Save directory</span>
-                <code>{data?.config.saveDir || "Not configured"}</code>
+              <div className="settings-row">
+                <div className="settings-row__info">
+                  <span className="settings-row__label">Library size</span>
+                  <span className="settings-row__value">
+                    {screenshots.length} captures indexed
+                  </span>
+                </div>
               </div>
+            </div>
 
-              <div className="setting-box">
-                <span>Library size</span>
-                <strong>{screenshots.length} captures indexed</strong>
-              </div>
-            </section>
-
-            <section className="pane">
-              <div className="section-head">
-                <h2>Hotkeys</h2>
-                <button
-                  className="tool-button tool-button--solid"
-                  onClick={saveHotkeys}
-                >
-                  Save
-                </button>
-              </div>
-
-              <div className="hotkey-row">
-                <div>
-                  <span>Display capture</span>
-                  <strong>{captureHotkeyDraft || "Unset"}</strong>
+            <div className="settings-group">
+              <span className="settings-group__title">Hotkeys</span>
+              <div className="settings-row">
+                <div className="settings-row__info">
+                  <span className="settings-row__label">Display capture</span>
+                  <span className="settings-row__value">
+                    {captureHotkeyDraft || "Unset"}
+                  </span>
                 </div>
                 <button
-                  className={`tool-button ${recordingTarget === "capture" ? "tool-button--recording" : ""}`}
+                  className={`settings-btn ${recordingTarget === "capture" ? "settings-btn--recording" : ""}`}
                   onClick={() =>
                     setRecordingTarget((current) =>
                       current === "capture" ? null : "capture",
                     )
                   }
                 >
-                  {recordingTarget === "capture" ? "Press keys" : "Record"}
+                  {recordingTarget === "capture" ? "Press keys..." : "Record"}
                 </button>
               </div>
-
-              <div className="hotkey-row">
-                <div>
-                  <span>Area capture</span>
-                  <strong>{regionHotkeyDraft || "Unset"}</strong>
+              <div className="settings-row">
+                <div className="settings-row__info">
+                  <span className="settings-row__label">Area capture</span>
+                  <span className="settings-row__value">
+                    {regionHotkeyDraft || "Unset"}
+                  </span>
                 </div>
                 <button
-                  className={`tool-button ${recordingTarget === "region" ? "tool-button--recording" : ""}`}
+                  className={`settings-btn ${recordingTarget === "region" ? "settings-btn--recording" : ""}`}
                   onClick={() =>
                     setRecordingTarget((current) =>
                       current === "region" ? null : "region",
                     )
                   }
                 >
-                  {recordingTarget === "region" ? "Press keys" : "Record"}
+                  {recordingTarget === "region" ? "Press keys..." : "Record"}
                 </button>
               </div>
-            </section>
-          </section>
+              <div className="settings-row" style={{ justifyContent: "flex-end" }}>
+                <button
+                  className="settings-btn settings-btn--primary"
+                  onClick={saveHotkeys}
+                >
+                  Save Hotkeys
+                </button>
+              </div>
+            </div>
+          </div>
         ) : null}
-      </main>
+      </div>
 
-      <footer className="statusline">
-        <span>{busyLabel || error || "Ready"}</span>
-        <span>
-          {selectedRecord ? selectedRecord.fileName : "No capture selected"}
-        </span>
-      </footer>
+      {/* ── Pager (shots only) ── */}
+      {activeTab === "shots" && totalPages > 1 ? (
+        <div className="pager">
+          <button
+            className="pager__btn"
+            disabled={pageIndex === 0}
+            onClick={() =>
+              setPageIndex((current) => Math.max(0, current - 1))
+            }
+          >
+            Prev
+          </button>
+          <span>
+            {pageIndex + 1} / {totalPages}
+          </span>
+          <button
+            className="pager__btn"
+            disabled={pageIndex >= totalPages - 1}
+            onClick={() =>
+              setPageIndex((current) =>
+                Math.min(totalPages - 1, current + 1),
+              )
+            }
+          >
+            Next
+          </button>
+        </div>
+      ) : null}
+
+      {/* ── Action Bar ── */}
+      <div className="action-bar">
+        <div className="action-bar__left">
+          <span className="action-bar__status">
+            {busyLabel || error || `${filteredScreenshots.length} captures`}
+          </span>
+        </div>
+        <div className="action-bar__right">
+          <button
+            className="action-shortcut"
+            disabled={!selectedRecord}
+            onClick={() =>
+              selectedRecord
+                ? void invoke("open_screenshot", {
+                    path: selectedRecord.filePath,
+                  })
+                : undefined
+            }
+          >
+            <kbd>O</kbd> Open
+          </button>
+          <button
+            className="action-shortcut"
+            disabled={!selectedRecord}
+            onClick={() =>
+              selectedRecord
+                ? void invoke("reveal_screenshot", {
+                    path: selectedRecord.filePath,
+                  })
+                : undefined
+            }
+          >
+            <kbd>R</kbd> Reveal
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
