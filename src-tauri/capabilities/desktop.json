@@ -1,7 +1,12 @@
 {
   "identifier": "desktop-capability",
   "platforms": ["macOS", "windows", "linux"],
-  "windows": ["main", "selection_overlay", "flash_overlay"],
+  "windows": [
+    "main",
+    "selection_overlay",
+    "flash_overlay",
+    "viewer_fullscreen"
+  ],
   "permissions": [
     "core:default",
     "global-shortcut:default",

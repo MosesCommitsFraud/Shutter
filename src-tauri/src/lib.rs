@@ -1,14 +1,24 @@
 mod models;
 mod storage;
 
-use std::{io::Cursor, path::Path, process::Command, sync::Mutex, time::Duration};
+use std::{
+    borrow::Cow,
+    fs,
+    io::Cursor,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::Mutex,
+    time::Duration,
+};
 
+use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::Local;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use models::{
     AppConfig, BootstrapPayload, CaptureKind, DisplayContext, FlashPreviewPayload, HotkeyConfig,
-    PendingSelection, PersistedState, RegionCaptureRequest, ScreenshotRecord, WindowContext,
+    PendingSelection, PersistedState, RegionCaptureRequest, ScreenshotRecord, ViewerPayload,
+    WindowContext,
 };
 use tauri::{
     menu::MenuBuilder,
@@ -26,9 +36,11 @@ use xcap::{Monitor, Window};
 const MAIN_LABEL: &str = "main";
 const SELECTION_LABEL: &str = "selection_overlay";
 const FLASH_LABEL: &str = "flash_overlay";
+const VIEWER_LABEL: &str = "viewer_fullscreen";
 
 const EVENT_LIBRARY_UPDATED: &str = "flashbang://library-updated";
 const EVENT_FLASH_PREVIEW: &str = "flashbang://flash-preview";
+const EVENT_VIEWER_OPEN: &str = "flashbang://viewer-open";
 
 const TRAY_OPEN_ID: &str = "open-manager";
 const TRAY_CAPTURE_ID: &str = "capture-display";
@@ -55,6 +67,7 @@ struct RuntimeState {
     persisted: PersistedState,
     pending_selection: Option<PendingSelection>,
     flash_seq: u64,
+    viewer_payload: Option<ViewerPayload>,
 }
 
 struct CaptureTarget {
@@ -656,6 +669,76 @@ fn open_file(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn share_file(path: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("rundll32.exe")
+            .args(["shell32.dll,OpenAs_RunDLL", path])
+            .spawn()
+            .map_err(app_err)?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(path).spawn().map_err(app_err)?;
+    }
+
+    Ok(())
+}
+
+fn is_supported_viewer_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif" | "tif" | "tiff"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn viewer_payload_for_path(path: &str) -> Result<ViewerPayload, String> {
+    let image_path = PathBuf::from(path);
+    let canonical_path = image_path.canonicalize().map_err(app_err)?;
+    let parent = canonical_path
+        .parent()
+        .ok_or_else(|| String::from("Image folder is unavailable"))?;
+
+    let mut files = fs::read_dir(parent)
+        .map_err(app_err)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|entry_path| entry_path.is_file() && is_supported_viewer_image(entry_path))
+        .collect::<Vec<_>>();
+
+    files.sort_by(|left, right| {
+        left.file_name()
+            .and_then(|value| value.to_str())
+            .cmp(&right.file_name().and_then(|value| value.to_str()))
+    });
+
+    let file_strings = files
+        .into_iter()
+        .map(|entry_path| entry_path.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+    let current_path = canonical_path.to_string_lossy().into_owned();
+    let current_index = file_strings
+        .iter()
+        .position(|entry_path| entry_path == &current_path)
+        .unwrap_or(0);
+
+    Ok(ViewerPayload {
+        files: if file_strings.is_empty() {
+            vec![current_path]
+        } else {
+            file_strings
+        },
+        current_index,
+    })
+}
+
 fn setup_auxiliary_windows(app: &AppHandle<Wry>) -> Result<(), String> {
     if app.get_webview_window(SELECTION_LABEL).is_none() {
         let builder =
@@ -685,6 +768,20 @@ fn setup_auxiliary_windows(app: &AppHandle<Wry>) -> Result<(), String> {
                 .resizable(false);
         #[cfg(not(target_os = "macos"))]
         let builder = builder.transparent(true);
+        builder.build().map_err(app_err)?;
+    }
+
+    if app.get_webview_window(VIEWER_LABEL).is_none() {
+        let builder =
+            WebviewWindowBuilder::new(app, VIEWER_LABEL, WebviewUrl::App("index.html".into()))
+                .title("Flashbang Viewer")
+                .visible(false)
+                .decorations(false)
+                .maximized(true)
+                .focused(true)
+                .resizable(false);
+        #[cfg(not(target_os = "macos"))]
+        let builder = builder.transparent(false);
         builder.build().map_err(app_err)?;
     }
 
@@ -984,6 +1081,28 @@ fn open_screenshot(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn share_screenshot(path: String) -> Result<(), String> {
+    share_file(&path)
+}
+
+#[tauri::command]
+fn copy_screenshot_to_clipboard(path: String) -> Result<(), String> {
+    let image = image::open(&path).map_err(app_err)?.to_rgba8();
+    let width = usize::try_from(image.width()).map_err(app_err)?;
+    let height = usize::try_from(image.height()).map_err(app_err)?;
+    let bytes = image.into_raw();
+
+    let mut clipboard = Clipboard::new().map_err(app_err)?;
+    clipboard
+        .set_image(ImageData {
+            width,
+            height,
+            bytes: Cow::Owned(bytes),
+        })
+        .map_err(app_err)
+}
+
+#[tauri::command]
 fn load_preview_image(path: String, max_width: u32, max_height: u32) -> Result<String, String> {
     let image = image::open(&path).map_err(app_err)?;
     let preview = image.thumbnail(max_width.max(1), max_height.max(1));
@@ -1005,6 +1124,37 @@ fn hide_manager(app: AppHandle<Wry>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_viewer(path: String, app: AppHandle<Wry>) -> Result<(), String> {
+    let payload = viewer_payload_for_path(&path)?;
+    {
+        let state = app.state::<AppState>();
+        let mut runtime = state.inner.lock().map_err(app_err)?;
+        runtime.viewer_payload = Some(payload.clone());
+    }
+    let viewer = app
+        .get_webview_window(VIEWER_LABEL)
+        .ok_or_else(|| String::from("Viewer window is unavailable"))?;
+    viewer.show().map_err(app_err)?;
+    viewer.set_focus().map_err(app_err)?;
+    app.emit_to(VIEWER_LABEL, EVENT_VIEWER_OPEN, payload)
+        .map_err(app_err)
+}
+
+#[tauri::command]
+fn hide_viewer(app: AppHandle<Wry>) -> Result<(), String> {
+    let viewer = app
+        .get_webview_window(VIEWER_LABEL)
+        .ok_or_else(|| String::from("Viewer window is unavailable"))?;
+    viewer.hide().map_err(app_err)
+}
+
+#[tauri::command]
+fn get_viewer_payload(state: State<'_, AppState>) -> Result<Option<ViewerPayload>, String> {
+    let runtime = state.inner.lock().map_err(app_err)?;
+    Ok(runtime.viewer_payload.clone())
+}
+
+#[tauri::command]
 fn start_window_drag(app: AppHandle<Wry>) -> Result<(), String> {
     let window = app
         .get_webview_window(MAIN_LABEL)
@@ -1021,6 +1171,7 @@ pub fn run() {
             persisted,
             pending_selection: None,
             flash_seq: 0,
+            viewer_payload: None,
         }),
     };
 
@@ -1075,6 +1226,16 @@ pub fn run() {
                 });
             }
 
+            if let Some(viewer_window) = app.get_webview_window(VIEWER_LABEL) {
+                let app_handle = app.handle().clone();
+                viewer_window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = hide_viewer(app_handle.clone());
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1093,9 +1254,14 @@ pub fn run() {
             delete_tag,
             reveal_screenshot,
             open_screenshot,
+            share_screenshot,
+            copy_screenshot_to_clipboard,
             load_preview_image,
             show_manager,
             hide_manager,
+            open_viewer,
+            hide_viewer,
+            get_viewer_payload,
             start_window_drag
         ])
         .run(tauri::generate_context!())

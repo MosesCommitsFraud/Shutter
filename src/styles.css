@@ -46,7 +46,8 @@ body[data-view="manager"] {
 }
 
 body[data-view="selection"],
-body[data-view="flash"] {
+body[data-view="flash"],
+body[data-view="viewer"] {
     overflow: hidden;
     background: transparent;
 }
@@ -649,58 +650,168 @@ button {
 
 /* ─── Image Viewer ─── */
 
-.viewer-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 100;
-    background: rgba(0, 0, 0, 0.92);
+.viewer-root {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
-    cursor: pointer;
+    background:
+        radial-gradient(
+            circle at top,
+            rgba(255, 191, 100, 0.12),
+            transparent 32%
+        ),
+        rgba(10, 10, 12, 0.98);
+    color: var(--text-primary);
+}
+
+.viewer-toolbar {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: rgba(20, 20, 23, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+}
+
+.viewer-toolbar__meta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+    text-align: center;
+    font-size: 0.84rem;
+}
+
+.viewer-toolbar__meta span:first-child {
+    max-width: min(54vw, 880px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.viewer-toolbar__meta span:last-child {
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+}
+
+.viewer-toolbar__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.viewer-toolbar__btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 72px;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    transition:
+        background 100ms ease,
+        border-color 100ms ease;
+}
+
+.viewer-toolbar__btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.viewer-toolbar__btn--primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #111;
+    font-weight: 600;
+}
+
+.viewer-toolbar__btn--primary:hover {
+    background: #ffd18c;
+}
+
+.viewer-stage {
+    width: calc(100vw - 160px);
+    height: calc(100vh - 140px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .viewer-image {
-    max-width: 95%;
-    max-height: 95%;
+    max-width: 100%;
+    max-height: 100%;
     object-fit: contain;
-    cursor: default;
-    border-radius: 4px;
+    border-radius: 12px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
 
-.viewer-close {
+.viewer-nav {
     position: absolute;
-    top: 12px;
-    right: 12px;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.1);
-    border: none;
+    top: 50%;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: center;
-    cursor: pointer;
-    transition: background 80ms ease;
-    z-index: 101;
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    transform: translateY(-50%);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: transparent;
+    font-size: 0;
+    line-height: 0;
+    transition:
+        background 100ms ease,
+        opacity 100ms ease;
 }
 
-.viewer-close:hover {
-    background: rgba(255, 255, 255, 0.2);
+.viewer-nav::before {
+    content: "";
+    width: 14px;
+    height: 14px;
+    border-top: 2px solid #fff;
+    border-right: 2px solid #fff;
 }
 
-.viewer-close svg {
-    width: 10px;
-    height: 10px;
-    stroke: #fff;
-    fill: none;
-    stroke-width: 1.5;
-    stroke-linecap: round;
+.viewer-nav:hover {
+    background: rgba(255, 255, 255, 0.16);
 }
 
-.viewer-loading {
-    color: var(--text-tertiary);
-    font-size: 0.9rem;
+.viewer-nav:disabled {
+    opacity: 0.35;
+}
+
+.viewer-nav--prev {
+    left: 26px;
+}
+
+.viewer-nav--prev::before {
+    transform: rotate(-135deg);
+}
+
+.viewer-nav--next {
+    right: 26px;
+}
+
+.viewer-nav--next::before {
+    transform: rotate(45deg);
 }
 
 /* ─── Settings Layout ─── */

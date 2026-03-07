@@ -8,7 +8,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -92,6 +92,11 @@ type FlashPreviewPayload = {
   captureKind: CaptureKind;
 };
 
+type ViewerPayload = {
+  files: string[];
+  currentIndex: number;
+};
+
 type Rect = {
   left: number;
   top: number;
@@ -116,13 +121,13 @@ const currentWebview = getCurrentWebviewWindow();
 const currentWindow = getCurrentWindow();
 const viewLabel = currentWebview.label;
 const isMacOS = navigator.userAgent.includes("Mac");
+const EVENT_VIEWER_OPEN = "flashbang://viewer-open";
 const HEADER_DRAG_THRESHOLD = 6;
 
 type HeaderPointerState = {
   pointerId: number;
   startX: number;
   startY: number;
-  focusSearchOnRelease: boolean;
   dragging: boolean;
 };
 
@@ -207,7 +212,7 @@ function acceleratorFromEvent(event: KeyboardEvent): string | null {
   return [...modifiers, key].join("+");
 }
 
-function isHeaderInteractiveTarget(target: EventTarget | null): boolean {
+function isHeaderControlTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
     target.closest(
@@ -308,36 +313,132 @@ function DetailPreview(props: {
   );
 }
 
-function ImageViewer(props: { path: string; onClose: () => void }) {
-  const src = usePreviewImage(props.path, 3840, 2160);
+function FullscreenViewer() {
+  const [payload, setPayload] = useState<ViewerPayload | null>(null);
+
+  useEffect(() => {
+    document.body.dataset.view = "viewer";
+  }, []);
+
+  useEffect(() => {
+    void invoke<ViewerPayload | null>("get_viewer_payload").then(
+      (viewerPayload) => {
+        if (viewerPayload) {
+          setPayload(viewerPayload);
+        }
+      },
+    );
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    let unlisten: (() => void) | undefined;
+
+    void listen<ViewerPayload>(EVENT_VIEWER_OPEN, (event) => {
+      if (mounted) {
+        setPayload(event.payload);
+      }
+    }).then((callback) => {
+      unlisten = callback;
+    });
+
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
+  }, []);
+
+  const files = payload?.files ?? [];
+  const currentIndex = payload?.currentIndex ?? 0;
+  const currentPath = files[currentIndex] ?? null;
+  const currentName = currentPath?.split(/[/\\]/).pop() ?? "";
+  const currentSrc = currentPath ? convertFileSrc(currentPath) : "";
+
+  const setIndex = (nextIndex: number) => {
+    if (!payload || files.length === 0) {
+      return;
+    }
+
+    const boundedIndex = (nextIndex + files.length) % files.length;
+    setPayload({
+      ...payload,
+      currentIndex: boundedIndex,
+    });
+  };
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        props.onClose();
+        void invoke("hide_viewer");
+      } else if (event.key === "ArrowLeft") {
+        setIndex(currentIndex - 1);
+      } else if (event.key === "ArrowRight") {
+        setIndex(currentIndex + 1);
       }
     };
+
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [props.onClose]);
+  }, [currentIndex, payload]);
+
+  if (!currentPath) {
+    return <div className="viewer-root" />;
+  }
 
   return (
-    <div className="viewer-overlay" onClick={props.onClose}>
-      <button className="viewer-close" onClick={props.onClose}>
-        <svg viewBox="0 0 12 12">
-          <path d="M3 3l6 6M9 3l-6 6" />
-        </svg>
+    <div className="viewer-root">
+      <div className="viewer-toolbar">
+        <button
+          className="viewer-toolbar__btn"
+          onClick={() => void invoke("hide_viewer")}
+        >
+          Back
+        </button>
+        <div className="viewer-toolbar__meta">
+          <span>{currentName}</span>
+          <span>
+            {currentIndex + 1} / {files.length}
+          </span>
+        </div>
+        <div className="viewer-toolbar__actions">
+          <button
+            className="viewer-toolbar__btn"
+            onClick={() =>
+              void invoke("share_screenshot", { path: currentPath })
+            }
+          >
+            Share
+          </button>
+          <button
+            className="viewer-toolbar__btn viewer-toolbar__btn--primary"
+            onClick={() =>
+              void invoke("copy_screenshot_to_clipboard", { path: currentPath })
+            }
+          >
+            Copy
+          </button>
+        </div>
+      </div>
+
+      <button
+        className="viewer-nav viewer-nav--prev"
+        disabled={files.length <= 1}
+        onClick={() => setIndex(currentIndex - 1)}
+      >
+        ‹
       </button>
-      {src ? (
-        <img
-          className="viewer-image"
-          src={src}
-          alt=""
-          onClick={(e) => e.stopPropagation()}
-        />
-      ) : (
-        <span className="viewer-loading">Loading...</span>
-      )}
+
+      <div className="viewer-stage">
+        <img className="viewer-image" src={currentSrc} alt={currentName} />
+      </div>
+
+      <button
+        className="viewer-nav viewer-nav--next"
+        disabled={files.length <= 1}
+        onClick={() => setIndex(currentIndex + 1)}
+      >
+        ›
+      </button>
     </div>
   );
 }
@@ -545,7 +646,6 @@ function ManagerApp() {
   const [recordingTarget, setRecordingTarget] = useState<HotkeyTarget>(null);
   const [busyLabel, setBusyLabel] = useState("");
   const [error, setError] = useState("");
-  const [viewerPath, setViewerPath] = useState<string | null>(null);
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
   const [newTagName, setNewTagName] = useState("");
   const [newTagColor, setNewTagColor] = useState(TAG_COLORS[0]);
@@ -641,11 +741,15 @@ function ManagerApp() {
 
   // Keyboard shortcuts
   useEffect(() => {
-    if (viewerPath || recordingTarget) {
+    if (recordingTarget) {
       return;
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
+      const currentSelectedRecord = selectedId
+        ? (data?.screenshots.find((record) => record.id === selectedId) ?? null)
+        : null;
+
       if (
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLSelectElement ||
@@ -664,16 +768,18 @@ function ManagerApp() {
         return;
       }
 
-      if (event.key === "o" && selectedRecord) {
-        setViewerPath(selectedRecord.filePath);
-      } else if (event.key === "r" && selectedRecord) {
-        void invoke("reveal_screenshot", { path: selectedRecord.filePath });
+      if (event.key === "o" && currentSelectedRecord) {
+        void invoke("open_viewer", { path: currentSelectedRecord.filePath });
+      } else if (event.key === "r" && currentSelectedRecord) {
+        void invoke("reveal_screenshot", {
+          path: currentSelectedRecord.filePath,
+        });
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [viewerPath, recordingTarget]);
+  }, [data, recordingTarget, selectedId]);
 
   const screenshots = data?.screenshots ?? [];
   const tagDefinitions = data?.tagDefinitions ?? [];
@@ -858,20 +964,8 @@ function ManagerApp() {
     }
   };
 
-  const handleHeaderPointerDown = (
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) => {
-    const target = event.target;
-    const activeInputTarget =
-      searchFocused &&
-      target instanceof HTMLInputElement &&
-      document.activeElement === target;
-
-    if (
-      event.button !== 0 ||
-      activeInputTarget ||
-      isHeaderInteractiveTarget(target)
-    ) {
+  const handleSearchDragStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || isHeaderControlTarget(event.target)) {
       headerPointerStateRef.current = null;
       return;
     }
@@ -880,16 +974,11 @@ function ManagerApp() {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      focusSearchOnRelease:
-        target instanceof Element &&
-        target.closest(".search-header__field") !== null,
       dragging: false,
     };
   };
 
-  const handleHeaderPointerMove = (
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) => {
+  const handleSearchDragMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const state = headerPointerStateRef.current;
     if (!state || state.pointerId !== event.pointerId || state.dragging) {
       return;
@@ -905,9 +994,7 @@ function ManagerApp() {
     void invoke("start_window_drag");
   };
 
-  const resetHeaderPointerState = (
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) => {
+  const handleSearchDragEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
     const state = headerPointerStateRef.current;
     if (!state || state.pointerId !== event.pointerId) {
       return;
@@ -915,7 +1002,7 @@ function ManagerApp() {
 
     headerPointerStateRef.current = null;
 
-    if (!state.dragging && state.focusSearchOnRelease) {
+    if (!state.dragging) {
       setSearchFocused(true);
       requestAnimationFrame(() => searchInputRef.current?.focus());
     }
@@ -924,18 +1011,9 @@ function ManagerApp() {
   return (
     <div className={`window-shell ${isMacOS ? "window-shell--macos" : ""}`}>
       {/* ── Image Viewer ── */}
-      {viewerPath ? (
-        <ImageViewer path={viewerPath} onClose={() => setViewerPath(null)} />
-      ) : null}
 
       {/* ── Search Header ── */}
-      <div
-        className="search-header"
-        onPointerDown={handleHeaderPointerDown}
-        onPointerMove={handleHeaderPointerMove}
-        onPointerUp={resetHeaderPointerState}
-        onPointerCancel={resetHeaderPointerState}
-      >
+      <div className="search-header">
         <SearchIcon />
         <div className="search-header__field">
           <input
@@ -950,6 +1028,10 @@ function ManagerApp() {
           {!searchFocused ? (
             <div
               className={`search-header__inactive ${search ? "" : "search-header__inactive--placeholder"}`}
+              onPointerDown={handleSearchDragStart}
+              onPointerMove={handleSearchDragMove}
+              onPointerUp={handleSearchDragEnd}
+              onPointerCancel={handleSearchDragEnd}
             >
               {search || "Search captures, apps, tags..."}
             </div>
@@ -1057,7 +1139,11 @@ function ManagerApp() {
                   <DetailPreview
                     path={selectedRecord.filePath}
                     alt={selectedRecord.fileName}
-                    onClick={() => setViewerPath(selectedRecord.filePath)}
+                    onClick={() =>
+                      void invoke("open_viewer", {
+                        path: selectedRecord.filePath,
+                      })
+                    }
                   />
 
                   <div className="detail-info-row">
@@ -1365,7 +1451,9 @@ function ManagerApp() {
             disabled={!selectedRecord}
             onClick={() =>
               selectedRecord
-                ? setViewerPath(selectedRecord.filePath)
+                ? void invoke("open_viewer", {
+                    path: selectedRecord.filePath,
+                  })
                 : undefined
             }
           >
@@ -1397,6 +1485,10 @@ export default function App() {
 
   if (viewLabel === "flash_overlay") {
     return <FlashOverlay />;
+  }
+
+  if (viewLabel === "viewer_fullscreen") {
+    return <FullscreenViewer />;
   }
 
   return <ManagerApp />;

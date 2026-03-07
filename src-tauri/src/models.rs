@@ -135,6 +135,13 @@ pub struct FlashPreviewPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ViewerPayload {
+    pub files: Vec<String>,
+    pub current_index: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum CaptureKind {
     Display,
     Region,
