@@ -78,11 +78,21 @@ button {
     user-select: none;
 }
 
+.window-shell--macos .search-header {
+    gap: 10px;
+    padding: 12px 16px 12px 84px;
+}
+
 .search-header__icon {
     flex-shrink: 0;
     width: 20px;
     height: 20px;
     color: var(--text-secondary);
+}
+
+.window-shell--macos .search-header__icon {
+    width: 18px;
+    height: 18px;
 }
 
 .search-header__icon svg {
@@ -103,6 +113,11 @@ button {
     outline: none;
     font-size: 1rem;
     color: var(--text-primary);
+}
+
+.window-shell--macos .search-header__input {
+    height: 32px;
+    font-size: 1rem;
 }
 
 .search-header__input::placeholder {

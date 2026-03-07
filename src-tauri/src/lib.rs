@@ -1024,6 +1024,18 @@ pub fn run() {
             setup_auxiliary_windows(app.handle())?;
             setup_tray(app.handle())?;
 
+            if let Some(main_window) = app.get_webview_window(MAIN_LABEL) {
+                #[cfg(target_os = "macos")]
+                {
+                    main_window.set_shadow(true)?;
+                }
+
+                #[cfg(not(target_os = "macos"))]
+                {
+                    main_window.set_decorations(false)?;
+                }
+            }
+
             let state = app.state::<AppState>();
             {
                 let mut runtime = state.inner.lock().map_err(app_err)?;

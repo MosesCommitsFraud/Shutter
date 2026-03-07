@@ -113,6 +113,7 @@ const previewCache = new Map<string, string>();
 const currentWebview = getCurrentWebviewWindow();
 const currentWindow = getCurrentWindow();
 const viewLabel = currentWebview.label;
+const isMacOS = navigator.userAgent.includes("Mac");
 
 function normalizeRect(
   startX: number,
@@ -824,7 +825,7 @@ function ManagerApp() {
   };
 
   return (
-    <div className="window-shell">
+    <div className={`window-shell ${isMacOS ? "window-shell--macos" : ""}`}>
       {/* ── Image Viewer ── */}
       {viewerPath ? (
         <ImageViewer
@@ -842,26 +843,28 @@ function ManagerApp() {
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search captures, apps, tags..."
         />
-        <div className="window-controls">
-          <button
-            className="window-btn"
-            onClick={() => void currentWindow.minimize()}
-          >
-            <svg viewBox="0 0 12 12"><path d="M2 6h8" /></svg>
-          </button>
-          <button
-            className="window-btn"
-            onClick={() => void currentWindow.toggleMaximize()}
-          >
-            <svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="0.5" /></svg>
-          </button>
-          <button
-            className="window-btn window-btn--close"
-            onClick={() => void currentWindow.close()}
-          >
-            <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
-          </button>
-        </div>
+        {!isMacOS ? (
+          <div className="window-controls">
+            <button
+              className="window-btn"
+              onClick={() => void currentWindow.minimize()}
+            >
+              <svg viewBox="0 0 12 12"><path d="M2 6h8" /></svg>
+            </button>
+            <button
+              className="window-btn"
+              onClick={() => void currentWindow.toggleMaximize()}
+            >
+              <svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="0.5" /></svg>
+            </button>
+            <button
+              className="window-btn window-btn--close"
+              onClick={() => void currentWindow.close()}
+            >
+              <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {/* ── Tab Bar ── */}
