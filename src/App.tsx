@@ -4,7 +4,9 @@ import {
   useEffect,
   useEffectEvent,
   useMemo,
+  useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -114,6 +116,15 @@ const currentWebview = getCurrentWebviewWindow();
 const currentWindow = getCurrentWindow();
 const viewLabel = currentWebview.label;
 const isMacOS = navigator.userAgent.includes("Mac");
+const HEADER_DRAG_THRESHOLD = 6;
+
+type HeaderPointerState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  focusSearchOnRelease: boolean;
+  dragging: boolean;
+};
 
 function normalizeRect(
   startX: number,
@@ -194,6 +205,15 @@ function acceleratorFromEvent(event: KeyboardEvent): string | null {
   }
 
   return [...modifiers, key].join("+");
+}
+
+function isHeaderInteractiveTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest(
+      ".window-controls, button, [role='button'], a, select, textarea",
+    ) !== null
+  );
 }
 
 function usePreviewImage(
@@ -532,7 +552,10 @@ function ManagerApp() {
   const [editingTagId, setEditingTagId] = useState<string | null>(null);
   const [editTagName, setEditTagName] = useState("");
   const [editTagColor, setEditTagColor] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
   const deferredSearch = useDeferredValue(search);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const headerPointerStateRef = useRef<HeaderPointerState | null>(null);
 
   useEffect(() => {
     document.body.dataset.view = "manager";
@@ -625,8 +648,19 @@ function ManagerApp() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
         event.target instanceof HTMLInputElement ||
-        event.target instanceof HTMLSelectElement
+        event.target instanceof HTMLSelectElement ||
+        event.target instanceof HTMLTextAreaElement
       ) {
+        return;
+      }
+
+      if (
+        event.key === "/" ||
+        ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f")
+      ) {
+        event.preventDefault();
+        setSearchFocused(true);
+        requestAnimationFrame(() => searchInputRef.current?.focus());
         return;
       }
 
@@ -824,44 +858,128 @@ function ManagerApp() {
     }
   };
 
+  const handleHeaderPointerDown = (
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
+    const target = event.target;
+    const activeInputTarget =
+      searchFocused &&
+      target instanceof HTMLInputElement &&
+      document.activeElement === target;
+
+    if (
+      event.button !== 0 ||
+      activeInputTarget ||
+      isHeaderInteractiveTarget(target)
+    ) {
+      headerPointerStateRef.current = null;
+      return;
+    }
+
+    headerPointerStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      focusSearchOnRelease:
+        target instanceof Element &&
+        target.closest(".search-header__field") !== null,
+      dragging: false,
+    };
+  };
+
+  const handleHeaderPointerMove = (
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
+    const state = headerPointerStateRef.current;
+    if (!state || state.pointerId !== event.pointerId || state.dragging) {
+      return;
+    }
+
+    const deltaX = Math.abs(event.clientX - state.startX);
+    const deltaY = Math.abs(event.clientY - state.startY);
+    if (Math.max(deltaX, deltaY) < HEADER_DRAG_THRESHOLD) {
+      return;
+    }
+
+    state.dragging = true;
+    void invoke("start_window_drag");
+  };
+
+  const resetHeaderPointerState = (
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
+    const state = headerPointerStateRef.current;
+    if (!state || state.pointerId !== event.pointerId) {
+      return;
+    }
+
+    headerPointerStateRef.current = null;
+
+    if (!state.dragging && state.focusSearchOnRelease) {
+      setSearchFocused(true);
+      requestAnimationFrame(() => searchInputRef.current?.focus());
+    }
+  };
+
   return (
     <div className={`window-shell ${isMacOS ? "window-shell--macos" : ""}`}>
       {/* ── Image Viewer ── */}
       {viewerPath ? (
-        <ImageViewer
-          path={viewerPath}
-          onClose={() => setViewerPath(null)}
-        />
+        <ImageViewer path={viewerPath} onClose={() => setViewerPath(null)} />
       ) : null}
 
       {/* ── Search Header ── */}
-      <div className="search-header" data-tauri-drag-region>
+      <div
+        className="search-header"
+        onPointerDown={handleHeaderPointerDown}
+        onPointerMove={handleHeaderPointerMove}
+        onPointerUp={resetHeaderPointerState}
+        onPointerCancel={resetHeaderPointerState}
+      >
         <SearchIcon />
-        <input
-          className="search-header__input"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search captures, apps, tags..."
-        />
+        <div className="search-header__field">
+          <input
+            ref={searchInputRef}
+            className="search-header__input"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
+            placeholder="Search captures, apps, tags..."
+          />
+          {!searchFocused ? (
+            <div
+              className={`search-header__inactive ${search ? "" : "search-header__inactive--placeholder"}`}
+            >
+              {search || "Search captures, apps, tags..."}
+            </div>
+          ) : null}
+        </div>
         {!isMacOS ? (
           <div className="window-controls">
             <button
               className="window-btn"
               onClick={() => void currentWindow.minimize()}
             >
-              <svg viewBox="0 0 12 12"><path d="M2 6h8" /></svg>
+              <svg viewBox="0 0 12 12">
+                <path d="M2 6h8" />
+              </svg>
             </button>
             <button
               className="window-btn"
               onClick={() => void currentWindow.toggleMaximize()}
             >
-              <svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="0.5" /></svg>
+              <svg viewBox="0 0 12 12">
+                <rect x="2.5" y="2.5" width="7" height="7" rx="0.5" />
+              </svg>
             </button>
             <button
               className="window-btn window-btn--close"
               onClick={() => void currentWindow.close()}
             >
-              <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
+              <svg viewBox="0 0 12 12">
+                <path d="M3 3l6 6M9 3l-6 6" />
+              </svg>
             </button>
           </div>
         ) : null}
@@ -968,7 +1086,6 @@ function ManagerApp() {
                             } as React.CSSProperties
                           }
                           onClick={() => void removeTagFromScreenshot(tagId)}
-                          title={`Remove "${tag.name}"`}
                         >
                           <span
                             className="tag-chip__dot"
@@ -1216,9 +1333,7 @@ function ManagerApp() {
           <button
             className="pager__btn"
             disabled={pageIndex === 0}
-            onClick={() =>
-              setPageIndex((current) => Math.max(0, current - 1))
-            }
+            onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
           >
             Prev
           </button>
@@ -1229,9 +1344,7 @@ function ManagerApp() {
             className="pager__btn"
             disabled={pageIndex >= totalPages - 1}
             onClick={() =>
-              setPageIndex((current) =>
-                Math.min(totalPages - 1, current + 1),
-              )
+              setPageIndex((current) => Math.min(totalPages - 1, current + 1))
             }
           >
             Next

@@ -660,13 +660,13 @@ fn setup_auxiliary_windows(app: &AppHandle<Wry>) -> Result<(), String> {
     if app.get_webview_window(SELECTION_LABEL).is_none() {
         let builder =
             WebviewWindowBuilder::new(app, SELECTION_LABEL, WebviewUrl::App("index.html".into()))
-            .title("Flashbang Selection")
-            .visible(false)
-            .decorations(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .shadow(false)
-            .resizable(false);
+                .title("Flashbang Selection")
+                .visible(false)
+                .decorations(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .shadow(false)
+                .resizable(false);
         #[cfg(not(target_os = "macos"))]
         let builder = builder.transparent(true);
         builder.build().map_err(app_err)?;
@@ -675,14 +675,14 @@ fn setup_auxiliary_windows(app: &AppHandle<Wry>) -> Result<(), String> {
     if app.get_webview_window(FLASH_LABEL).is_none() {
         let builder =
             WebviewWindowBuilder::new(app, FLASH_LABEL, WebviewUrl::App("index.html".into()))
-            .title("Flashbang Preview")
-            .visible(false)
-            .decorations(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .shadow(false)
-            .focused(false)
-            .resizable(false);
+                .title("Flashbang Preview")
+                .visible(false)
+                .decorations(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .shadow(false)
+                .focused(false)
+                .resizable(false);
         #[cfg(not(target_os = "macos"))]
         let builder = builder.transparent(true);
         builder.build().map_err(app_err)?;
@@ -960,16 +960,10 @@ fn rename_tag(
 }
 
 #[tauri::command]
-fn delete_tag(
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<BootstrapPayload, String> {
+fn delete_tag(id: String, state: State<'_, AppState>) -> Result<BootstrapPayload, String> {
     {
         let mut runtime = state.inner.lock().map_err(app_err)?;
-        runtime
-            .persisted
-            .tag_definitions
-            .retain(|tag| tag.id != id);
+        runtime.persisted.tag_definitions.retain(|tag| tag.id != id);
         for record in &mut runtime.persisted.library.screenshots {
             record.tags.retain(|tag_id| *tag_id != id);
         }
@@ -1008,6 +1002,14 @@ fn show_manager(app: AppHandle<Wry>) -> Result<(), String> {
 #[tauri::command]
 fn hide_manager(app: AppHandle<Wry>) -> Result<(), String> {
     hide_main_window(&app)
+}
+
+#[tauri::command]
+fn start_window_drag(app: AppHandle<Wry>) -> Result<(), String> {
+    let window = app
+        .get_webview_window(MAIN_LABEL)
+        .ok_or_else(|| String::from("Main window is unavailable"))?;
+    window.start_dragging().map_err(app_err)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1093,7 +1095,8 @@ pub fn run() {
             open_screenshot,
             load_preview_image,
             show_manager,
-            hide_manager
+            hide_manager,
+            start_window_drag
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
