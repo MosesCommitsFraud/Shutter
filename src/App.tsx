@@ -6,13 +6,15 @@ import {
   useMemo,
   useState,
 } from "react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
 
 type CaptureKind = "display" | "region";
+type ManagerTab = "shots" | "focus" | "settings";
+type HotkeyTarget = "capture" | "region" | null;
 
 type AppConfig = {
   saveDir: string;
@@ -88,9 +90,36 @@ type Rect = {
   height: number;
 };
 
+const PAGE_SIZE = 6;
+const previewCache = new Map<string, string>();
 const currentWebview = getCurrentWebviewWindow();
 const currentWindow = getCurrentWindow();
 const viewLabel = currentWebview.label;
+
+function WindowIcon(props: { kind: "minimize" | "maximize" | "close" }) {
+  if (props.kind === "minimize") {
+    return (
+      <svg viewBox="0 0 12 12" aria-hidden="true">
+        <path d="M2 6.5h8" />
+      </svg>
+    );
+  }
+
+  if (props.kind === "maximize") {
+    return (
+      <svg viewBox="0 0 12 12" aria-hidden="true">
+        <rect x="2.25" y="2.25" width="7.5" height="7.5" rx="0.6" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 12 12" aria-hidden="true">
+      <path d="M3 3l6 6" />
+      <path d="M9 3L3 9" />
+    </svg>
+  );
+}
 
 function normalizeRect(
   startX: number,
@@ -113,8 +142,146 @@ function formatTimestamp(timestamp: string): string {
   }).format(new Date(timestamp));
 }
 
-function screenshotSrc(path: string): string {
-  return convertFileSrc(path);
+function titleFromRecord(record: ScreenshotRecord | null): string {
+  if (!record) {
+    return "No capture selected";
+  }
+
+  return record.activeWindow?.title || record.fileName;
+}
+
+function acceleratorFromEvent(event: KeyboardEvent): string | null {
+  const modifiers: string[] = [];
+
+  if (event.ctrlKey || event.metaKey) {
+    modifiers.push("CmdOrControl");
+  }
+  if (event.altKey) {
+    modifiers.push("Alt");
+  }
+  if (event.shiftKey) {
+    modifiers.push("Shift");
+  }
+
+  const code = event.code;
+  let key: string | null = null;
+
+  if (/^Key[A-Z]$/.test(code)) {
+    key = code.slice(3);
+  } else if (/^Digit[0-9]$/.test(code)) {
+    key = code.slice(5);
+  } else if (/^F[0-9]{1,2}$/.test(code)) {
+    key = code;
+  } else {
+    const map: Record<string, string> = {
+      Backspace: "Backspace",
+      Delete: "Delete",
+      End: "End",
+      Enter: "Enter",
+      Escape: "Escape",
+      Home: "Home",
+      Insert: "Insert",
+      Minus: "-",
+      Equal: "=",
+      BracketLeft: "[",
+      BracketRight: "]",
+      Backslash: "\\",
+      Semicolon: ";",
+      Quote: "'",
+      Comma: ",",
+      Period: ".",
+      Slash: "/",
+      Space: "Space",
+      Tab: "Tab",
+      ArrowUp: "Up",
+      ArrowDown: "Down",
+      ArrowLeft: "Left",
+      ArrowRight: "Right",
+      PageUp: "PageUp",
+      PageDown: "PageDown",
+    };
+    key = map[code] ?? null;
+  }
+
+  if (!key) {
+    return null;
+  }
+
+  return [...modifiers, key].join("+");
+}
+
+function usePreviewImage(
+  path: string | null,
+  maxWidth: number,
+  maxHeight: number,
+) {
+  const [src, setSrc] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!path) {
+      setSrc("");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const cacheKey = `${path}::${maxWidth}x${maxHeight}`;
+    const cached = previewCache.get(cacheKey);
+    if (cached) {
+      setSrc(cached);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setSrc("");
+
+    void invoke<string>("load_preview_image", {
+      path,
+      maxWidth,
+      maxHeight,
+    })
+      .then((dataUrl) => {
+        if (!cancelled) {
+          previewCache.set(cacheKey, dataUrl);
+          setSrc(dataUrl);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSrc("");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [path, maxHeight, maxWidth]);
+
+  return src;
+}
+
+function PreviewImage(props: {
+  path: string | null;
+  alt: string;
+  className: string;
+  maxWidth: number;
+  maxHeight: number;
+  placeholderLabel: string;
+}) {
+  const src = usePreviewImage(props.path, props.maxWidth, props.maxHeight);
+
+  if (!src) {
+    return (
+      <div className={`${props.className} preview-placeholder`}>
+        <span>{props.placeholderLabel}</span>
+      </div>
+    );
+  }
+
+  return <img className={props.className} src={src} alt={props.alt} />;
 }
 
 function FlashOverlay() {
@@ -130,22 +297,13 @@ function FlashOverlay() {
 
   useEffect(() => {
     let mounted = true;
-
-    const setup = async () => {
-      const unlisten = await listen<FlashPreviewPayload>(
-        "flashbang://flash-preview",
-        (event) => {
-          if (mounted) {
-            handlePreview(event.payload);
-          }
-        },
-      );
-
-      return unlisten;
-    };
-
     let unlisten: (() => void) | undefined;
-    void setup().then((callback) => {
+
+    void listen<FlashPreviewPayload>("flashbang://flash-preview", (event) => {
+      if (mounted) {
+        handlePreview(event.payload);
+      }
+    }).then((callback) => {
       unlisten = callback;
     });
 
@@ -163,13 +321,18 @@ function FlashOverlay() {
     <div className="flash-root" key={payload.seq}>
       <div
         className="flash-bloom"
-        style={{ ["--flash-opacity" as string]: String(payload.flashOpacity) }}
+        style={{
+          ["--flash-opacity" as string]: String(payload.flashOpacity * 0.65),
+        }}
       />
       <div className="flash-card">
-        <img
-          className="flash-card__image"
-          src={screenshotSrc(payload.filePath)}
+        <PreviewImage
+          path={payload.filePath}
           alt=""
+          className="flash-card__image"
+          maxWidth={480}
+          maxHeight={280}
+          placeholderLabel="Preview"
         />
         <div className="flash-card__meta">
           <span>{payload.primaryApp}</span>
@@ -216,10 +379,6 @@ function SelectionOverlay() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  if (!pending) {
-    return <div className="selection-root" />;
-  }
-
   const finishSelection = async (rect: Rect) => {
     if (rect.width < 8 || rect.height < 8 || submitting) {
       setOrigin(null);
@@ -250,25 +409,33 @@ function SelectionOverlay() {
   return (
     <div
       className="selection-root"
-      onMouseDown={(event) => {
+      onPointerDown={(event) => {
+        if (submitting) {
+          return;
+        }
+        event.currentTarget.setPointerCapture(event.pointerId);
         setOrigin({ x: event.clientX, y: event.clientY });
         setCursor({ x: event.clientX, y: event.clientY });
       }}
-      onMouseMove={(event) => {
+      onPointerMove={(event) => {
         if (origin) {
           setCursor({ x: event.clientX, y: event.clientY });
         }
       }}
-      onMouseUp={() => {
+      onPointerUp={() => {
         if (selection) {
           void finishSelection(selection);
         }
       }}
+      onPointerCancel={() => {
+        setOrigin(null);
+        setCursor(null);
+      }}
     >
       <div className="selection-hud">
-        <span className="selection-pill">Flashbang Area Capture</span>
+        <span className="selection-pill">Area Capture</span>
         <span className="selection-copy">
-          Drag over the target area. Press Esc to cancel.
+          Drag the box and release. Esc cancels.
         </span>
       </div>
 
@@ -287,20 +454,27 @@ function SelectionOverlay() {
           </span>
         </div>
       ) : null}
+
+      {pending ? (
+        <div className="selection-corner selection-corner--tl" />
+      ) : null}
     </div>
   );
 }
 
 function ManagerApp() {
   const [data, setData] = useState<BootstrapPayload | null>(null);
+  const [activeTab, setActiveTab] = useState<ManagerTab>("shots");
   const [search, setSearch] = useState("");
-  const [activeProgram, setActiveProgram] = useState<string>("All");
-  const [selectedId, setSelectedId] = useState<string>("");
+  const [activeProgram, setActiveProgram] = useState("All");
+  const [selectedId, setSelectedId] = useState("");
+  const [pageIndex, setPageIndex] = useState(0);
   const [tagsDraft, setTagsDraft] = useState("");
   const [captureHotkeyDraft, setCaptureHotkeyDraft] = useState("");
   const [regionHotkeyDraft, setRegionHotkeyDraft] = useState("");
-  const [busyLabel, setBusyLabel] = useState<string>("");
-  const [error, setError] = useState<string>("");
+  const [recordingTarget, setRecordingTarget] = useState<HotkeyTarget>(null);
+  const [busyLabel, setBusyLabel] = useState("");
+  const [error, setError] = useState("");
   const deferredSearch = useDeferredValue(search);
 
   useEffect(() => {
@@ -353,6 +527,38 @@ function ManagerApp() {
     };
   }, [reloadState]);
 
+  useEffect(() => {
+    if (!recordingTarget) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === "Escape") {
+        setRecordingTarget(null);
+        return;
+      }
+
+      const accelerator = acceleratorFromEvent(event);
+      if (!accelerator) {
+        return;
+      }
+
+      if (recordingTarget === "capture") {
+        setCaptureHotkeyDraft(accelerator);
+      } else {
+        setRegionHotkeyDraft(accelerator);
+      }
+
+      setRecordingTarget(null);
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [recordingTarget]);
+
   const screenshots = data?.screenshots ?? [];
 
   const programs = useMemo(() => {
@@ -360,11 +566,6 @@ function ManagerApp() {
     for (const record of screenshots) {
       if (record.primaryApp.trim()) {
         values.add(record.primaryApp);
-      }
-      for (const window of record.visibleWindows) {
-        if (window.appName.trim()) {
-          values.add(window.appName);
-        }
       }
     }
     return [
@@ -377,11 +578,8 @@ function ManagerApp() {
     const query = deferredSearch.trim().toLowerCase();
     return screenshots.filter((record) => {
       const matchesProgram =
-        activeProgram === "All" ||
-        record.primaryApp === activeProgram ||
-        record.visibleWindows.some(
-          (window) => window.appName === activeProgram,
-        );
+        activeProgram === "All" || record.primaryApp === activeProgram;
+
       if (!matchesProgram) {
         return false;
       }
@@ -394,11 +592,7 @@ function ManagerApp() {
         record.fileName,
         record.primaryApp,
         record.activeWindow?.title ?? "",
-        record.activeWindow?.appName ?? "",
         record.tags.join(" "),
-        record.visibleWindows
-          .map((window) => `${window.appName} ${window.title}`)
-          .join(" "),
       ]
         .join(" ")
         .toLowerCase();
@@ -407,20 +601,43 @@ function ManagerApp() {
     });
   }, [activeProgram, deferredSearch, screenshots]);
 
-  const selectedRecord =
-    filteredScreenshots.find((record) => record.id === selectedId) ??
-    filteredScreenshots[0] ??
-    null;
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filteredScreenshots.length / PAGE_SIZE),
+  );
+  const pageStart = pageIndex * PAGE_SIZE;
+  const pageItems = filteredScreenshots.slice(pageStart, pageStart + PAGE_SIZE);
 
   useEffect(() => {
-    if (!selectedRecord) {
+    setPageIndex(0);
+  }, [activeProgram, deferredSearch]);
+
+  useEffect(() => {
+    setPageIndex((current) => Math.min(current, totalPages - 1));
+  }, [totalPages]);
+
+  useEffect(() => {
+    if (!pageItems.length) {
       setSelectedId("");
       setTagsDraft("");
       return;
     }
 
-    setSelectedId(selectedRecord.id);
-    setTagsDraft(selectedRecord.tags.join(", "));
+    if (!pageItems.some((record) => record.id === selectedId)) {
+      setSelectedId(pageItems[0].id);
+      setTagsDraft(pageItems[0].tags.join(", "));
+    }
+  }, [pageItems, selectedId]);
+
+  const selectedRecord =
+    filteredScreenshots.find((record) => record.id === selectedId) ??
+    pageItems[0] ??
+    null;
+
+  useEffect(() => {
+    if (selectedRecord) {
+      setTagsDraft(selectedRecord.tags.join(", "));
+    }
   }, [selectedRecord?.id]);
 
   const saveHotkeys = async () => {
@@ -489,247 +706,401 @@ function ManagerApp() {
     }
   };
 
+  const pageLabel =
+    filteredScreenshots.length === 0
+      ? "0 / 0"
+      : `${pageIndex + 1} / ${totalPages}`;
+
   return (
-    <div className="manager-shell">
-      <header className="hero">
-        <div>
-          <span className="hero-kicker">Background Capture Utility</span>
-          <h1>Flashbang</h1>
-          <p>
-            Resident screenshots with instant feedback, fullscreen-aware display
-            capture, region selection, and a searchable visual library.
-          </p>
+    <div className="window-shell">
+      <header className="titlebar">
+        <div className="titlebar__brand" data-tauri-drag-region>
+          <span className="brand-mark" />
+          <div>
+            <strong>Flashbang</strong>
+            <span>Resident capture manager</span>
+          </div>
         </div>
 
-        <div className="hero-actions">
+        <nav className="titlebar__tabs">
           <button
-            className="button button--solid"
-            onClick={() => void invoke("capture_now")}
+            className={`tab-chip ${activeTab === "shots" ? "tab-chip--active" : ""}`}
+            onClick={() => setActiveTab("shots")}
           >
-            Capture Display
+            Shots
           </button>
           <button
-            className="button button--ghost"
+            className={`tab-chip ${activeTab === "focus" ? "tab-chip--active" : ""}`}
+            onClick={() => setActiveTab("focus")}
+          >
+            Focus
+          </button>
+          <button
+            className={`tab-chip ${activeTab === "settings" ? "tab-chip--active" : ""}`}
+            onClick={() => setActiveTab("settings")}
+          >
+            Settings
+          </button>
+        </nav>
+
+        <div className="titlebar__actions">
+          <button
+            className="tool-button tool-button--solid"
+            onClick={() => void invoke("capture_now")}
+          >
+            Capture
+          </button>
+          <button
+            className="tool-button"
             onClick={() => void invoke("begin_region_capture")}
           >
-            Capture Area
+            Area
+          </button>
+          <button
+            className="window-button"
+            onClick={() => void currentWindow.minimize()}
+          >
+            <WindowIcon kind="minimize" />
+          </button>
+          <button
+            className="window-button"
+            onClick={() => void currentWindow.toggleMaximize()}
+          >
+            <WindowIcon kind="maximize" />
+          </button>
+          <button
+            className="window-button window-button--close"
+            onClick={() => void currentWindow.close()}
+          >
+            <WindowIcon kind="close" />
           </button>
         </div>
       </header>
 
-      <section className="control-grid">
-        <article className="panel">
-          <div className="panel__header">
-            <h2>Destination</h2>
-            <button className="button button--ghost" onClick={chooseFolder}>
-              Choose Folder
-            </button>
-          </div>
-          <p className="muted">
-            Screenshots land in the configured folder immediately after capture.
-          </p>
-          <code className="path-pill">
-            {data?.config.saveDir || "No save directory configured yet"}
-          </code>
-        </article>
-
-        <article className="panel">
-          <div className="panel__header">
-            <h2>Hotkeys</h2>
-            <button className="button button--ghost" onClick={saveHotkeys}>
-              Apply
-            </button>
-          </div>
-
-          <label className="field">
-            <span>Display capture</span>
-            <input
-              value={captureHotkeyDraft}
-              onChange={(event) => setCaptureHotkeyDraft(event.target.value)}
-            />
-          </label>
-
-          <label className="field">
-            <span>Area capture</span>
-            <input
-              value={regionHotkeyDraft}
-              onChange={(event) => setRegionHotkeyDraft(event.target.value)}
-            />
-          </label>
-        </article>
-
-        <article className="panel panel--status">
-          <h2>Library</h2>
-          <div className="metric-row">
-            <strong>{screenshots.length}</strong>
-            <span>Total captures</span>
-          </div>
-          <div className="metric-row">
-            <strong>{programs.length - 1}</strong>
-            <span>Programs indexed</span>
-          </div>
-          <div className="metric-row">
-            <strong>
-              {data?.config.onboardingComplete ? "Ready" : "Setup"}
-            </strong>
-            <span>Manager state</span>
-          </div>
-        </article>
-      </section>
-
-      <section className="browser-shell">
-        <div className="browser-toolbar">
-          <input
-            className="search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search tags, files, apps, or window titles"
-          />
-
-          <div className="program-strip">
-            {programs.map((program) => (
-              <button
-                key={program}
-                className={`chip ${activeProgram === program ? "chip--active" : ""}`}
-                onClick={() => setActiveProgram(program)}
-              >
-                {program}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="browser-grid">
-          <section className="library-grid">
-            {filteredScreenshots.map((record) => (
-              <button
-                key={record.id}
-                className={`capture-card ${
-                  selectedRecord?.id === record.id ? "capture-card--active" : ""
-                }`}
-                onClick={() => setSelectedId(record.id)}
-              >
-                <img
-                  src={screenshotSrc(record.filePath)}
-                  alt={record.fileName}
+      <main className="workspace">
+        {activeTab === "shots" ? (
+          <section className="panel-grid">
+            <section className="pane pane--gallery">
+              <div className="toolbar-row">
+                <input
+                  className="compact-input compact-input--search"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search files, apps, tags"
                 />
-                <div className="capture-card__body">
-                  <div>
-                    <strong>{record.primaryApp}</strong>
-                    <span>{formatTimestamp(record.createdAt)}</span>
+                <select
+                  className="compact-select"
+                  value={activeProgram}
+                  onChange={(event) => setActiveProgram(event.target.value)}
+                >
+                  {programs.map((program) => (
+                    <option key={program} value={program}>
+                      {program}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="thumb-grid">
+                {pageItems.map((record) => (
+                  <button
+                    key={record.id}
+                    className={`thumb-card ${selectedRecord?.id === record.id ? "thumb-card--active" : ""}`}
+                    onClick={() => setSelectedId(record.id)}
+                  >
+                    <PreviewImage
+                      path={record.filePath}
+                      alt={record.fileName}
+                      className="thumb-card__image"
+                      maxWidth={360}
+                      maxHeight={220}
+                      placeholderLabel={record.primaryApp}
+                    />
+                    <div className="thumb-card__meta">
+                      <strong>{record.primaryApp}</strong>
+                      <span>
+                        {record.captureKind === "region" ? "Area" : "Display"}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+
+                {!pageItems.length ? (
+                  <div className="empty-panel">
+                    <strong>No captures</strong>
+                    <span>Take a screenshot or change the filters.</span>
                   </div>
+                ) : null}
+              </div>
+
+              <div className="pager-row">
+                <span>{filteredScreenshots.length} matches</span>
+                <div className="pager-controls">
+                  <button
+                    className="tool-button"
+                    disabled={pageIndex === 0}
+                    onClick={() =>
+                      setPageIndex((current) => Math.max(0, current - 1))
+                    }
+                  >
+                    Prev
+                  </button>
+                  <span className="pager-label">{pageLabel}</span>
+                  <button
+                    className="tool-button"
+                    disabled={pageIndex >= totalPages - 1}
+                    onClick={() =>
+                      setPageIndex((current) =>
+                        Math.min(totalPages - 1, current + 1),
+                      )
+                    }
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <aside className="pane pane--preview">
+              <PreviewImage
+                path={selectedRecord?.filePath ?? null}
+                alt={selectedRecord?.fileName ?? "No capture selected"}
+                className="hero-preview"
+                maxWidth={860}
+                maxHeight={520}
+                placeholderLabel="Preview"
+              />
+
+              <div className="info-strip">
+                <div>
+                  <strong>{selectedRecord?.primaryApp ?? "No app"}</strong>
+                  <span>{titleFromRecord(selectedRecord)}</span>
+                </div>
+                <div>
+                  <strong>
+                    {selectedRecord
+                      ? `${selectedRecord.width} x ${selectedRecord.height}`
+                      : "--"}
+                  </strong>
                   <span>
-                    {record.captureKind === "region" ? "Area" : "Display"}
+                    {selectedRecord
+                      ? formatTimestamp(selectedRecord.createdAt)
+                      : "Select a capture"}
                   </span>
                 </div>
-              </button>
-            ))}
-
-            {filteredScreenshots.length === 0 ? (
-              <div className="empty-state">
-                <strong>No captures matched.</strong>
-                <span>Adjust the filters or trigger a new screenshot.</span>
               </div>
-            ) : null}
+
+              <div className="action-row">
+                <button
+                  className="tool-button"
+                  disabled={!selectedRecord}
+                  onClick={() =>
+                    selectedRecord
+                      ? void invoke("open_screenshot", {
+                          path: selectedRecord.filePath,
+                        })
+                      : undefined
+                  }
+                >
+                  Open
+                </button>
+                <button
+                  className="tool-button"
+                  disabled={!selectedRecord}
+                  onClick={() =>
+                    selectedRecord
+                      ? void invoke("reveal_screenshot", {
+                          path: selectedRecord.filePath,
+                        })
+                      : undefined
+                  }
+                >
+                  Reveal
+                </button>
+                <button
+                  className="tool-button"
+                  onClick={() => setActiveTab("focus")}
+                  disabled={!selectedRecord}
+                >
+                  Details
+                </button>
+              </div>
+            </aside>
           </section>
+        ) : null}
 
-          <aside className="detail-panel">
-            {selectedRecord ? (
-              <>
-                <img
-                  className="detail-panel__hero"
-                  src={screenshotSrc(selectedRecord.filePath)}
-                  alt={selectedRecord.fileName}
-                />
-
-                <div className="detail-panel__section">
-                  <div className="detail-row">
-                    <strong>{selectedRecord.primaryApp}</strong>
-                    <span>{formatTimestamp(selectedRecord.createdAt)}</span>
-                  </div>
-                  <div className="detail-row detail-row--muted">
-                    <span>{selectedRecord.fileName}</span>
-                    <span>
-                      {selectedRecord.width} x {selectedRecord.height}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="detail-panel__section">
-                  <label className="field">
-                    <span>Tags</span>
-                    <input
-                      value={tagsDraft}
-                      onChange={(event) => setTagsDraft(event.target.value)}
-                      onBlur={saveTags}
-                      placeholder="boss-fight, mood-shot, ui-bug"
-                    />
-                  </label>
-
-                  <div className="button-row">
-                    <button
-                      className="button button--ghost"
-                      onClick={() =>
-                        void invoke("open_screenshot", {
-                          path: selectedRecord.filePath,
-                        })
-                      }
-                    >
-                      Open File
-                    </button>
-                    <button
-                      className="button button--ghost"
-                      onClick={() =>
-                        void invoke("reveal_screenshot", {
-                          path: selectedRecord.filePath,
-                        })
-                      }
-                    >
-                      Reveal in Folder
-                    </button>
-                  </div>
-                </div>
-
-                <div className="detail-panel__section">
-                  <h3>Window Context</h3>
-                  <ul className="context-list">
-                    {(selectedRecord.visibleWindows.length
-                      ? selectedRecord.visibleWindows
-                      : selectedRecord.activeWindow
-                        ? [selectedRecord.activeWindow]
-                        : []
-                    ).map((window) => (
-                      <li key={`${selectedRecord.id}-${window.id}`}>
-                        <strong>{window.appName || "Unknown app"}</strong>
-                        <span>{window.title || "Untitled window"}</span>
-                        <span>
-                          {window.isFocused
-                            ? "Focused"
-                            : window.isFullscreen
-                              ? "Fullscreen"
-                              : window.isMaximized
-                                ? "Maximized"
-                                : "Visible"}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </>
-            ) : (
-              <div className="empty-state empty-state--detail">
-                <strong>Select a capture</strong>
+        {activeTab === "focus" ? (
+          <section className="panel-grid panel-grid--focus">
+            <section className="pane">
+              <div className="section-head">
+                <h2>Selected Capture</h2>
                 <span>
-                  Its metadata, tags, and window context show up here.
+                  {selectedRecord
+                    ? formatTimestamp(selectedRecord.createdAt)
+                    : "Nothing selected"}
                 </span>
               </div>
-            )}
-          </aside>
-        </div>
-      </section>
 
-      {busyLabel ? <div className="status-bar">{busyLabel}</div> : null}
-      {error ? <div className="error-bar">{error}</div> : null}
+              <PreviewImage
+                path={selectedRecord?.filePath ?? null}
+                alt={selectedRecord?.fileName ?? "No capture selected"}
+                className="detail-preview"
+                maxWidth={640}
+                maxHeight={380}
+                placeholderLabel="Preview"
+              />
+
+              <div className="detail-grid">
+                <div className="stat-box">
+                  <span>Program</span>
+                  <strong>{selectedRecord?.primaryApp ?? "--"}</strong>
+                </div>
+                <div className="stat-box">
+                  <span>Capture</span>
+                  <strong>{selectedRecord?.captureKind ?? "--"}</strong>
+                </div>
+                <div className="stat-box">
+                  <span>Display</span>
+                  <strong>{selectedRecord?.display.name ?? "--"}</strong>
+                </div>
+                <div className="stat-box">
+                  <span>Windows</span>
+                  <strong>{selectedRecord?.visibleWindows.length ?? 0}</strong>
+                </div>
+              </div>
+            </section>
+
+            <section className="pane">
+              <div className="section-head">
+                <h2>Tags and Context</h2>
+                <button
+                  className="tool-button"
+                  onClick={saveTags}
+                  disabled={!selectedRecord}
+                >
+                  Save Tags
+                </button>
+              </div>
+
+              <label className="inline-field">
+                <span>Tags</span>
+                <input
+                  className="compact-input"
+                  value={tagsDraft}
+                  onChange={(event) => setTagsDraft(event.target.value)}
+                  placeholder="boss-fight, hud, cinematic"
+                />
+              </label>
+
+              <div className="window-list">
+                {(selectedRecord?.visibleWindows.slice(0, 6) ?? []).map(
+                  (window) => (
+                    <article
+                      key={`${selectedRecord?.id}-${window.id}`}
+                      className="window-row"
+                    >
+                      <strong>{window.appName || "Unknown app"}</strong>
+                      <span>{window.title || "Untitled window"}</span>
+                      <em>
+                        {window.isFocused
+                          ? "Focused"
+                          : window.isFullscreen
+                            ? "Fullscreen"
+                            : window.isMaximized
+                              ? "Maximized"
+                              : "Visible"}
+                      </em>
+                    </article>
+                  ),
+                )}
+
+                {!selectedRecord?.visibleWindows.length ? (
+                  <div className="empty-panel empty-panel--compact">
+                    <strong>No window context</strong>
+                    <span>Choose a capture from the Shots tab.</span>
+                  </div>
+                ) : null}
+              </div>
+            </section>
+          </section>
+        ) : null}
+
+        {activeTab === "settings" ? (
+          <section className="panel-grid panel-grid--settings">
+            <section className="pane">
+              <div className="section-head">
+                <h2>Storage</h2>
+                <button className="tool-button" onClick={chooseFolder}>
+                  Choose Folder
+                </button>
+              </div>
+
+              <div className="setting-box">
+                <span>Save directory</span>
+                <code>{data?.config.saveDir || "Not configured"}</code>
+              </div>
+
+              <div className="setting-box">
+                <span>Library size</span>
+                <strong>{screenshots.length} captures indexed</strong>
+              </div>
+            </section>
+
+            <section className="pane">
+              <div className="section-head">
+                <h2>Hotkeys</h2>
+                <button
+                  className="tool-button tool-button--solid"
+                  onClick={saveHotkeys}
+                >
+                  Save
+                </button>
+              </div>
+
+              <div className="hotkey-row">
+                <div>
+                  <span>Display capture</span>
+                  <strong>{captureHotkeyDraft || "Unset"}</strong>
+                </div>
+                <button
+                  className={`tool-button ${recordingTarget === "capture" ? "tool-button--recording" : ""}`}
+                  onClick={() =>
+                    setRecordingTarget((current) =>
+                      current === "capture" ? null : "capture",
+                    )
+                  }
+                >
+                  {recordingTarget === "capture" ? "Press keys" : "Record"}
+                </button>
+              </div>
+
+              <div className="hotkey-row">
+                <div>
+                  <span>Area capture</span>
+                  <strong>{regionHotkeyDraft || "Unset"}</strong>
+                </div>
+                <button
+                  className={`tool-button ${recordingTarget === "region" ? "tool-button--recording" : ""}`}
+                  onClick={() =>
+                    setRecordingTarget((current) =>
+                      current === "region" ? null : "region",
+                    )
+                  }
+                >
+                  {recordingTarget === "region" ? "Press keys" : "Record"}
+                </button>
+              </div>
+            </section>
+          </section>
+        ) : null}
+      </main>
+
+      <footer className="statusline">
+        <span>{busyLabel || error || "Ready"}</span>
+        <span>
+          {selectedRecord ? selectedRecord.fileName : "No capture selected"}
+        </span>
+      </footer>
     </div>
   );
 }

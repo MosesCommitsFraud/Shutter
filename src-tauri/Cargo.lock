@@ -1031,7 +1031,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.7.4",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -1329,8 +1329,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "flashbang"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "directories",
  "image",
@@ -1345,6 +1346,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tokio",
  "uuid",
+ "x-win",
  "xcap",
 ]
 
@@ -6555,6 +6557,28 @@ dependencies = [
  "windows-core 0.61.2",
  "windows-version",
  "x11-dl",
+]
+
+[[package]]
+name = "x-win"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b0034172e95cd484d1d409f45d32a4d1617639c1b37489d50127fd452263b59"
+dependencies = [
+ "base64 0.22.1",
+ "block2",
+ "image",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "once_cell",
+ "png 0.18.1",
+ "serde_json",
+ "windows 0.62.2",
+ "xcb",
+ "zbus",
 ]
 
 [[package]]

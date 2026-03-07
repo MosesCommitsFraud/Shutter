@@ -1,10 +1,11 @@
 mod models;
 mod storage;
 
-use std::{path::Path, process::Command, sync::Mutex, time::Duration};
+use std::{io::Cursor, path::Path, process::Command, sync::Mutex, time::Duration};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::Local;
-use image::{DynamicImage, RgbaImage};
+use image::{DynamicImage, ImageFormat, RgbaImage};
 use models::{
     AppConfig, BootstrapPayload, CaptureKind, DisplayContext, FlashPreviewPayload, HotkeyConfig,
     PendingSelection, PersistedState, RegionCaptureRequest, ScreenshotRecord, WindowContext,
@@ -17,6 +18,7 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use uuid::Uuid;
+use x_win::{get_active_window, get_open_windows, WindowInfo};
 use xcap::{Monitor, Window};
 
 const MAIN_LABEL: &str = "main";
@@ -30,6 +32,16 @@ const TRAY_OPEN_ID: &str = "open-manager";
 const TRAY_CAPTURE_ID: &str = "capture-display";
 const TRAY_REGION_ID: &str = "capture-region";
 const TRAY_QUIT_ID: &str = "quit";
+const OVERLAY_APP_HINTS: &[&str] = &[
+    "nvidia",
+    "overlay",
+    "game bar",
+    "xbox",
+    "steam",
+    "discord",
+    "obs",
+    "amd software",
+];
 
 struct AppState {
     inner: Mutex<RuntimeState>,
@@ -102,6 +114,48 @@ fn slugify(input: &str) -> String {
     output.trim_matches('-').chars().take(48).collect()
 }
 
+fn sanitize_process_name(name: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let without_extension = trimmed
+        .strip_suffix(".exe")
+        .or_else(|| trimmed.strip_suffix(".app"))
+        .unwrap_or(trimmed);
+
+    without_extension
+        .replace(['_', '-'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn best_process_name(window: &WindowInfo) -> String {
+    let candidates = [
+        sanitize_process_name(&window.info.name),
+        sanitize_process_name(&window.info.exec_name),
+        Path::new(&window.info.path)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(sanitize_process_name)
+            .unwrap_or_default(),
+    ];
+
+    candidates
+        .into_iter()
+        .find(|candidate| !candidate.trim().is_empty())
+        .unwrap_or_else(|| String::from("Desktop"))
+}
+
+fn is_overlay_app(app_name: &str, title: &str) -> bool {
+    let haystack = format!("{app_name} {title}").to_lowercase();
+    OVERLAY_APP_HINTS
+        .iter()
+        .any(|pattern| haystack.contains(pattern))
+}
+
 fn rects_intersect(
     left_x: i32,
     left_y: i32,
@@ -133,6 +187,46 @@ fn monitor_to_context(monitor: &Monitor) -> Result<DisplayContext, String> {
         height: monitor.height().map_err(app_err)?,
         scale_factor: monitor.scale_factor().unwrap_or(1.0),
         is_primary: monitor.is_primary().unwrap_or(false),
+    })
+}
+
+fn xwin_to_context(
+    window: &WindowInfo,
+    display: &DisplayContext,
+    focused_id: Option<u32>,
+) -> Option<WindowContext> {
+    let width = u32::try_from(window.position.width).ok()?;
+    let height = u32::try_from(window.position.height).ok()?;
+    if width <= 60 || height <= 60 {
+        return None;
+    }
+
+    let app_name = best_process_name(window);
+    let title = window.title.trim().to_string();
+    if app_name.trim().is_empty() && title.is_empty() {
+        return None;
+    }
+
+    let x = window.position.x;
+    let y = window.position.y;
+    let epsilon = 12_i64;
+    let covers_display = (x - display.x).abs() as i64 <= epsilon
+        && (y - display.y).abs() as i64 <= epsilon
+        && (width as i64 - display.width as i64).abs() <= epsilon
+        && (height as i64 - display.height as i64).abs() <= epsilon;
+
+    Some(WindowContext {
+        id: window.id,
+        app_name,
+        title,
+        x,
+        y,
+        width,
+        height,
+        z: 0,
+        is_maximized: covers_display,
+        is_focused: focused_id == Some(window.id),
+        is_fullscreen: window.position.is_full_screen || covers_display,
     })
 }
 
@@ -170,23 +264,31 @@ fn normalize_windows(mut windows: Vec<WindowContext>) -> Vec<WindowContext> {
             && !(window.title.trim().is_empty() && window.app_name.trim().is_empty())
     });
     windows.sort_by(|left, right| {
-        right
-            .is_focused
-            .cmp(&left.is_focused)
+        let left_area = left.width as u64 * left.height as u64;
+        let right_area = right.width as u64 * right.height as u64;
+        let left_overlay = is_overlay_app(&left.app_name, &left.title);
+        let right_overlay = is_overlay_app(&right.app_name, &right.title);
+
+        right_overlay
+            .cmp(&left_overlay)
             .then_with(|| right.is_fullscreen.cmp(&left.is_fullscreen))
             .then_with(|| right.is_maximized.cmp(&left.is_maximized))
-            .then_with(|| {
-                (right.width as u64 * right.height as u64)
-                    .cmp(&(left.width as u64 * left.height as u64))
-            })
+            .then_with(|| right.is_focused.cmp(&left.is_focused))
+            .then_with(|| right_area.cmp(&left_area))
             .then_with(|| left.z.cmp(&right.z))
     });
     windows
 }
 
-fn resolve_capture_target() -> Result<CaptureTarget, String> {
+fn choose_primary_window<'a>(windows: &'a [WindowContext]) -> Option<&'a WindowContext> {
+    windows
+        .iter()
+        .find(|window| !is_overlay_app(&window.app_name, &window.title))
+        .or_else(|| windows.first())
+}
+
+fn resolve_capture_target_from_xcap(monitors: Vec<Monitor>) -> Result<CaptureTarget, String> {
     let windows = Window::all().map_err(app_err)?;
-    let monitors = Monitor::all().map_err(app_err)?;
 
     let focused_window = windows.iter().find(|window| {
         window.is_focused().unwrap_or(false) && !window.is_minimized().unwrap_or(false)
@@ -226,16 +328,8 @@ fn resolve_capture_target() -> Result<CaptureTarget, String> {
         .iter()
         .find(|window| window.is_focused)
         .cloned();
-    let primary_app = active_window
-        .as_ref()
+    let primary_app = choose_primary_window(&visible_windows)
         .map(|window| window.app_name.clone())
-        .filter(|app| !app.trim().is_empty())
-        .or_else(|| {
-            visible_windows
-                .first()
-                .map(|window| window.app_name.clone())
-                .filter(|app| !app.trim().is_empty())
-        })
         .unwrap_or_else(|| String::from("Desktop"));
 
     Ok(CaptureTarget {
@@ -245,6 +339,69 @@ fn resolve_capture_target() -> Result<CaptureTarget, String> {
         visible_windows,
         primary_app,
     })
+}
+
+fn resolve_capture_target() -> Result<CaptureTarget, String> {
+    let monitors = Monitor::all().map_err(app_err)?;
+    let active_window = get_active_window().ok();
+    let open_windows = get_open_windows().ok();
+
+    if let (Some(active_window_info), Some(open_window_infos)) =
+        (active_window.as_ref(), open_windows)
+    {
+        let center_x = active_window_info.position.x + (active_window_info.position.width / 2);
+        let center_y = active_window_info.position.y + (active_window_info.position.height / 2);
+        let monitor = Monitor::from_point(center_x, center_y)
+            .or_else(|_| {
+                monitors
+                    .iter()
+                    .find(|monitor| monitor.is_primary().unwrap_or(false))
+                    .cloned()
+                    .ok_or_else(|| xcap::XCapError::new("No monitors available"))
+            })
+            .map_err(app_err)?;
+
+        let display = monitor_to_context(&monitor)?;
+        let focused_id = Some(active_window_info.id);
+        let visible_windows = normalize_windows(
+            open_window_infos
+                .iter()
+                .filter_map(|window| xwin_to_context(window, &display, focused_id))
+                .filter(|window| {
+                    rects_intersect(
+                        display.x,
+                        display.y,
+                        display.width,
+                        display.height,
+                        window.x,
+                        window.y,
+                        window.width,
+                        window.height,
+                    )
+                })
+                .collect(),
+        );
+
+        if !visible_windows.is_empty() {
+            let active_window = visible_windows
+                .iter()
+                .find(|window| window.is_focused)
+                .cloned();
+            let primary_app = choose_primary_window(&visible_windows)
+                .map(|window| window.app_name.clone())
+                .unwrap_or_else(|| String::from("Desktop"));
+
+            return Ok(CaptureTarget {
+                monitor,
+                display,
+                active_window,
+                visible_windows,
+                primary_app,
+            });
+        }
+    }
+
+    resolve_capture_target_from_xcap(monitors)
 }
 
 fn find_monitor(display: &DisplayContext) -> Result<Monitor, String> {
@@ -375,7 +532,7 @@ fn show_flash_preview(
 
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(900)).await;
+        tokio::time::sleep(Duration::from_millis(420)).await;
         if let Some(window) = app_handle.get_webview_window(FLASH_LABEL) {
             let _ = window.hide();
         }
@@ -754,6 +911,17 @@ fn open_screenshot(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn load_preview_image(path: String, max_width: u32, max_height: u32) -> Result<String, String> {
+    let image = image::open(&path).map_err(app_err)?;
+    let preview = image.thumbnail(max_width.max(1), max_height.max(1));
+    let mut bytes = Vec::new();
+    preview
+        .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+        .map_err(app_err)?;
+    Ok(format!("data:image/png;base64,{}", BASE64.encode(bytes)))
+}
+
+#[tauri::command]
 fn show_manager(app: AppHandle<Wry>) -> Result<(), String> {
     show_main_window(&app)
 }
@@ -827,6 +995,7 @@ pub fn run() {
             update_tags,
             reveal_screenshot,
             open_screenshot,
+            load_preview_image,
             show_manager,
             hide_manager
         ])
