@@ -674,6 +674,11 @@ button {
     color: var(--text-primary);
 }
 
+.viewer-root--macos {
+    border-radius: var(--radius-window);
+    overflow: hidden;
+}
+
 .viewer-toolbar {
     position: absolute;
     top: 20px;

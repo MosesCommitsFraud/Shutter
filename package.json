@@ -4,8 +4,9 @@
   "version": "0.1.1",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "prepare:icons": "node scripts/sync-icons.mjs",
+    "dev": "pnpm prepare:icons && vite",
+    "build": "pnpm prepare:icons && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },

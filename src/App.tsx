@@ -315,9 +315,28 @@ function DetailPreview(props: {
 
 function FullscreenViewer() {
   const [payload, setPayload] = useState<ViewerPayload | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     document.body.dataset.view = "viewer";
+  }, []);
+
+  useEffect(() => {
+    if (!isMacOS) return;
+    const viewerWindow = getCurrentWindow();
+    let mounted = true;
+    void viewerWindow.isFullscreen().then((fs) => {
+      if (mounted) setIsFullscreen(fs);
+    });
+    const unlisten = viewerWindow.onResized(() => {
+      void viewerWindow.isFullscreen().then((fs) => {
+        if (mounted) setIsFullscreen(fs);
+      });
+    });
+    return () => {
+      mounted = false;
+      void unlisten.then((fn) => fn());
+    };
   }, []);
 
   useEffect(() => {
@@ -381,12 +400,14 @@ function FullscreenViewer() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [currentIndex, payload]);
 
+  const viewerClass = `viewer-root${isMacOS && !isFullscreen ? " viewer-root--macos" : ""}`;
+
   if (!currentPath) {
-    return <div className="viewer-root" />;
+    return <div className={viewerClass} />;
   }
 
   return (
-    <div className="viewer-root">
+    <div className={viewerClass}>
       <div className="viewer-toolbar">
         <button
           className="viewer-toolbar__btn"
