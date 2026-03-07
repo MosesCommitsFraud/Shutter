@@ -34,6 +34,7 @@ const TRAY_REGION_ID: &str = "capture-region";
 const TRAY_QUIT_ID: &str = "quit";
 const OVERLAY_APP_HINTS: &[&str] = &[
     "nvidia",
+    "geforce",
     "overlay",
     "game bar",
     "xbox",
@@ -41,6 +42,7 @@ const OVERLAY_APP_HINTS: &[&str] = &[
     "discord",
     "obs",
     "amd software",
+    "radeon",
 ];
 
 struct AppState {
@@ -69,6 +71,7 @@ fn state_snapshot(runtime: &RuntimeState) -> BootstrapPayload {
     BootstrapPayload {
         config: runtime.persisted.config.clone(),
         screenshots: runtime.persisted.library.screenshots.clone(),
+        tag_definitions: runtime.persisted.tag_definitions.clone(),
     }
 }
 
@@ -901,6 +904,70 @@ fn update_tags(
 }
 
 #[tauri::command]
+fn create_tag(
+    name: String,
+    color: String,
+    state: State<'_, AppState>,
+) -> Result<BootstrapPayload, String> {
+    {
+        let mut runtime = state.inner.lock().map_err(app_err)?;
+        let tag = models::TagDefinition {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.trim().to_string(),
+            color,
+        };
+        runtime.persisted.tag_definitions.push(tag);
+    }
+    persist_runtime_state(&state)?;
+    let runtime = state.inner.lock().map_err(app_err)?;
+    Ok(state_snapshot(&runtime))
+}
+
+#[tauri::command]
+fn rename_tag(
+    id: String,
+    name: String,
+    color: String,
+    state: State<'_, AppState>,
+) -> Result<BootstrapPayload, String> {
+    {
+        let mut runtime = state.inner.lock().map_err(app_err)?;
+        if let Some(tag) = runtime
+            .persisted
+            .tag_definitions
+            .iter_mut()
+            .find(|tag| tag.id == id)
+        {
+            tag.name = name.trim().to_string();
+            tag.color = color;
+        }
+    }
+    persist_runtime_state(&state)?;
+    let runtime = state.inner.lock().map_err(app_err)?;
+    Ok(state_snapshot(&runtime))
+}
+
+#[tauri::command]
+fn delete_tag(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<BootstrapPayload, String> {
+    {
+        let mut runtime = state.inner.lock().map_err(app_err)?;
+        runtime
+            .persisted
+            .tag_definitions
+            .retain(|tag| tag.id != id);
+        for record in &mut runtime.persisted.library.screenshots {
+            record.tags.retain(|tag_id| *tag_id != id);
+        }
+    }
+    persist_runtime_state(&state)?;
+    let runtime = state.inner.lock().map_err(app_err)?;
+    Ok(state_snapshot(&runtime))
+}
+
+#[tauri::command]
 fn reveal_screenshot(path: String) -> Result<(), String> {
     reveal_in_file_manager(&path)
 }
@@ -993,6 +1060,9 @@ pub fn run() {
             cancel_region_capture,
             capture_region,
             update_tags,
+            create_tag,
+            rename_tag,
+            delete_tag,
             reveal_screenshot,
             open_screenshot,
             load_preview_image,

@@ -18,9 +18,19 @@ pub struct ScreenshotLibrary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TagDefinition {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PersistedState {
     pub config: AppConfig,
     pub library: ScreenshotLibrary,
+    #[serde(default)]
+    pub tag_definitions: Vec<TagDefinition>,
 }
 
 impl Default for PersistedState {
@@ -28,6 +38,7 @@ impl Default for PersistedState {
         Self {
             config: AppConfig::default(),
             library: ScreenshotLibrary::default(),
+            tag_definitions: Vec::new(),
         }
     }
 }
@@ -37,6 +48,7 @@ impl Default for PersistedState {
 pub struct BootstrapPayload {
     pub config: AppConfig,
     pub screenshots: Vec<ScreenshotRecord>,
+    pub tag_definitions: Vec<TagDefinition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

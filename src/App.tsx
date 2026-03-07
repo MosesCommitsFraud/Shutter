@@ -24,6 +24,12 @@ type AppConfig = {
   onboardingComplete: boolean;
 };
 
+type TagDefinition = {
+  id: string;
+  name: string;
+  color: string;
+};
+
 type DisplayContext = {
   id: number;
   name: string;
@@ -67,6 +73,7 @@ type ScreenshotRecord = {
 type BootstrapPayload = {
   config: AppConfig;
   screenshots: ScreenshotRecord[];
+  tagDefinitions: TagDefinition[];
 };
 
 type PendingSelection = {
@@ -89,6 +96,17 @@ type Rect = {
   width: number;
   height: number;
 };
+
+const TAG_COLORS = [
+  "#E5534B",
+  "#F0883E",
+  "#FFBF64",
+  "#57AB5A",
+  "#539BF5",
+  "#B083F0",
+  "#F778BA",
+  "#768390",
+];
 
 const PAGE_SIZE = 50;
 const previewCache = new Map<string, string>();
@@ -231,7 +249,7 @@ function usePreviewImage(
 }
 
 function ListThumb(props: { path: string | null; app: string }) {
-  const src = usePreviewImage(props.path, 96, 64);
+  const src = usePreviewImage(props.path, 192, 128);
 
   if (!src) {
     return (
@@ -244,8 +262,12 @@ function ListThumb(props: { path: string | null; app: string }) {
   return <img className="list-item__thumb" src={src} alt="" />;
 }
 
-function DetailPreview(props: { path: string | null; alt: string }) {
-  const src = usePreviewImage(props.path, 860, 520);
+function DetailPreview(props: {
+  path: string | null;
+  alt: string;
+  onClick: () => void;
+}) {
+  const src = usePreviewImage(props.path, 1920, 1080);
 
   if (!src) {
     return (
@@ -255,11 +277,52 @@ function DetailPreview(props: { path: string | null; alt: string }) {
     );
   }
 
-  return <img className="detail-preview" src={src} alt={props.alt} />;
+  return (
+    <img
+      className="detail-preview"
+      src={src}
+      alt={props.alt}
+      onClick={props.onClick}
+    />
+  );
+}
+
+function ImageViewer(props: { path: string; onClose: () => void }) {
+  const src = usePreviewImage(props.path, 3840, 2160);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        props.onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [props.onClose]);
+
+  return (
+    <div className="viewer-overlay" onClick={props.onClose}>
+      <button className="viewer-close" onClick={props.onClose}>
+        <svg viewBox="0 0 12 12">
+          <path d="M3 3l6 6M9 3l-6 6" />
+        </svg>
+      </button>
+      {src ? (
+        <img
+          className="viewer-image"
+          src={src}
+          alt=""
+          onClick={(e) => e.stopPropagation()}
+        />
+      ) : (
+        <span className="viewer-loading">Loading...</span>
+      )}
+    </div>
+  );
 }
 
 function FlashPreviewImage(props: { path: string | null }) {
-  const src = usePreviewImage(props.path, 480, 280);
+  const src = usePreviewImage(props.path, 960, 560);
 
   if (!src) {
     return null;
@@ -454,15 +517,20 @@ function ManagerApp() {
   const [data, setData] = useState<BootstrapPayload | null>(null);
   const [activeTab, setActiveTab] = useState<ManagerTab>("shots");
   const [search, setSearch] = useState("");
-  const [activeProgram, setActiveProgram] = useState("All");
   const [selectedId, setSelectedId] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
-  const [tagsDraft, setTagsDraft] = useState("");
   const [captureHotkeyDraft, setCaptureHotkeyDraft] = useState("");
   const [regionHotkeyDraft, setRegionHotkeyDraft] = useState("");
   const [recordingTarget, setRecordingTarget] = useState<HotkeyTarget>(null);
   const [busyLabel, setBusyLabel] = useState("");
   const [error, setError] = useState("");
+  const [viewerPath, setViewerPath] = useState<string | null>(null);
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [newTagName, setNewTagName] = useState("");
+  const [newTagColor, setNewTagColor] = useState(TAG_COLORS[0]);
+  const [editingTagId, setEditingTagId] = useState<string | null>(null);
+  const [editTagName, setEditTagName] = useState("");
+  const [editTagColor, setEditTagColor] = useState("");
   const deferredSearch = useDeferredValue(search);
 
   useEffect(() => {
@@ -547,47 +615,64 @@ function ManagerApp() {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [recordingTarget]);
 
-  const screenshots = data?.screenshots ?? [];
-
-  const programs = useMemo(() => {
-    const values = new Set<string>();
-    for (const record of screenshots) {
-      if (record.primaryApp.trim()) {
-        values.add(record.primaryApp);
-      }
+  // Keyboard shortcuts
+  useEffect(() => {
+    if (viewerPath || recordingTarget) {
+      return;
     }
-    return [
-      "All",
-      ...Array.from(values).sort((left, right) => left.localeCompare(right)),
-    ];
-  }, [screenshots]);
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+
+      if (event.key === "o" && selectedRecord) {
+        setViewerPath(selectedRecord.filePath);
+      } else if (event.key === "r" && selectedRecord) {
+        void invoke("reveal_screenshot", { path: selectedRecord.filePath });
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [viewerPath, recordingTarget]);
+
+  const screenshots = data?.screenshots ?? [];
+  const tagDefinitions = data?.tagDefinitions ?? [];
+  const tagMap = useMemo(() => {
+    const map = new Map<string, TagDefinition>();
+    for (const tag of tagDefinitions) {
+      map.set(tag.id, tag);
+    }
+    return map;
+  }, [tagDefinitions]);
 
   const filteredScreenshots = useMemo(() => {
     const query = deferredSearch.trim().toLowerCase();
     return screenshots.filter((record) => {
-      const matchesProgram =
-        activeProgram === "All" || record.primaryApp === activeProgram;
-
-      if (!matchesProgram) {
-        return false;
-      }
-
       if (!query) {
         return true;
       }
+
+      const tagNames = record.tags
+        .map((id) => tagMap.get(id)?.name ?? "")
+        .join(" ");
 
       const haystack = [
         record.fileName,
         record.primaryApp,
         record.activeWindow?.title ?? "",
-        record.tags.join(" "),
+        tagNames,
       ]
         .join(" ")
         .toLowerCase();
 
       return haystack.includes(query);
     });
-  }, [activeProgram, deferredSearch, screenshots]);
+  }, [deferredSearch, screenshots, tagMap]);
 
   const totalPages = Math.max(
     1,
@@ -598,7 +683,7 @@ function ManagerApp() {
 
   useEffect(() => {
     setPageIndex(0);
-  }, [activeProgram, deferredSearch]);
+  }, [deferredSearch]);
 
   useEffect(() => {
     setPageIndex((current) => Math.min(current, totalPages - 1));
@@ -607,13 +692,11 @@ function ManagerApp() {
   useEffect(() => {
     if (!pageItems.length) {
       setSelectedId("");
-      setTagsDraft("");
       return;
     }
 
     if (!pageItems.some((record) => record.id === selectedId)) {
       setSelectedId(pageItems[0].id);
-      setTagsDraft(pageItems[0].tags.join(", "));
     }
   }, [pageItems, selectedId]);
 
@@ -621,12 +704,6 @@ function ManagerApp() {
     filteredScreenshots.find((record) => record.id === selectedId) ??
     pageItems[0] ??
     null;
-
-  useEffect(() => {
-    if (selectedRecord) {
-      setTagsDraft(selectedRecord.tags.join(", "));
-    }
-  }, [selectedRecord?.id]);
 
   const saveHotkeys = async () => {
     setBusyLabel("Saving hotkeys");
@@ -670,32 +747,92 @@ function ManagerApp() {
     }
   };
 
-  const saveTags = async () => {
-    if (!selectedRecord) {
+  const addTagToScreenshot = async (tagId: string) => {
+    if (!selectedRecord || selectedRecord.tags.includes(tagId)) {
       return;
     }
-
-    setBusyLabel("Updating tags");
-    setError("");
-
     try {
       const payload = await invoke<BootstrapPayload>("update_tags", {
         id: selectedRecord.id,
-        tags: tagsDraft
-          .split(",")
-          .map((tag) => tag.trim())
-          .filter(Boolean),
+        tags: [...selectedRecord.tags, tagId],
       });
       setData(payload);
-    } catch (tagError) {
-      setError(tagError instanceof Error ? tagError.message : String(tagError));
-    } finally {
-      setBusyLabel("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+    setTagPickerOpen(false);
+  };
+
+  const removeTagFromScreenshot = async (tagId: string) => {
+    if (!selectedRecord) {
+      return;
+    }
+    try {
+      const payload = await invoke<BootstrapPayload>("update_tags", {
+        id: selectedRecord.id,
+        tags: selectedRecord.tags.filter((id) => id !== tagId),
+      });
+      setData(payload);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleCreateTag = async () => {
+    const name = newTagName.trim();
+    if (!name) {
+      return;
+    }
+    try {
+      const payload = await invoke<BootstrapPayload>("create_tag", {
+        name,
+        color: newTagColor,
+      });
+      setData(payload);
+      setNewTagName("");
+      setNewTagColor(TAG_COLORS[0]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleRenameTag = async (id: string) => {
+    const name = editTagName.trim();
+    if (!name) {
+      return;
+    }
+    try {
+      const payload = await invoke<BootstrapPayload>("rename_tag", {
+        id,
+        name,
+        color: editTagColor,
+      });
+      setData(payload);
+      setEditingTagId(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleDeleteTag = async (id: string) => {
+    try {
+      const payload = await invoke<BootstrapPayload>("delete_tag", { id });
+      setData(payload);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
   return (
     <div className="window-shell">
+      {/* ── Image Viewer ── */}
+      {viewerPath ? (
+        <ImageViewer
+          path={viewerPath}
+          onClose={() => setViewerPath(null)}
+        />
+      ) : null}
+
       {/* ── Search Header ── */}
       <div className="search-header" data-tauri-drag-region>
         <SearchIcon />
@@ -703,21 +840,8 @@ function ManagerApp() {
           className="search-header__input"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search captures..."
+          placeholder="Search captures, apps, tags..."
         />
-        {activeTab === "shots" ? (
-          <select
-            className="search-header__filter"
-            value={activeProgram}
-            onChange={(event) => setActiveProgram(event.target.value)}
-          >
-            {programs.map((program) => (
-              <option key={program} value={program}>
-                {program}
-              </option>
-            ))}
-          </select>
-        ) : null}
         <div className="window-controls">
           <button
             className="window-btn"
@@ -812,83 +936,84 @@ function ManagerApp() {
                   <DetailPreview
                     path={selectedRecord.filePath}
                     alt={selectedRecord.fileName}
+                    onClick={() => setViewerPath(selectedRecord.filePath)}
                   />
 
-                  <div className="detail-meta">
-                    <div className="detail-meta__item">
-                      <span className="detail-meta__label">Application</span>
-                      <span className="detail-meta__value">
-                        {selectedRecord.primaryApp}
-                      </span>
-                    </div>
-                    <div className="detail-meta__item">
-                      <span className="detail-meta__label">Dimensions</span>
-                      <span className="detail-meta__value">
-                        {selectedRecord.width} x {selectedRecord.height}
-                      </span>
-                    </div>
-                    <div className="detail-meta__item">
-                      <span className="detail-meta__label">Display</span>
-                      <span className="detail-meta__value">
-                        {selectedRecord.display.name}
-                      </span>
-                    </div>
-                    <div className="detail-meta__item">
-                      <span className="detail-meta__label">Captured</span>
-                      <span className="detail-meta__value">
-                        {formatTimestamp(selectedRecord.createdAt)}
-                      </span>
-                    </div>
+                  <div className="detail-info-row">
+                    <span className="detail-info-row__app">
+                      {selectedRecord.primaryApp}
+                    </span>
+                    <span className="detail-info-row__dim">
+                      {selectedRecord.width} x {selectedRecord.height}
+                    </span>
+                    <span className="detail-info-row__time">
+                      {formatTimestamp(selectedRecord.createdAt)}
+                    </span>
                   </div>
 
-                  <div className="tags-section">
-                    <span className="tags-section__label">Tags</span>
-                    <div className="tags-section__input-row">
-                      <input
-                        className="tags-section__input"
-                        value={tagsDraft}
-                        onChange={(event) => setTagsDraft(event.target.value)}
-                        placeholder="boss-fight, hud, cinematic"
-                      />
-                      <button className="tags-section__save" onClick={saveTags}>
-                        Save
-                      </button>
-                    </div>
-                  </div>
-
-                  {selectedRecord.visibleWindows.length > 0 ? (
-                    <div className="windows-section">
-                      <span className="windows-section__label">
-                        Visible Windows
-                      </span>
-                      {selectedRecord.visibleWindows.slice(0, 5).map((w) => (
-                        <div
-                          key={`${selectedRecord.id}-${w.id}`}
-                          className="window-row"
+                  <div className="tag-chips">
+                    {selectedRecord.tags.map((tagId) => {
+                      const tag = tagMap.get(tagId);
+                      if (!tag) return null;
+                      return (
+                        <button
+                          key={tagId}
+                          className="tag-chip"
+                          style={
+                            {
+                              "--tag-color": tag.color,
+                            } as React.CSSProperties
+                          }
+                          onClick={() => void removeTagFromScreenshot(tagId)}
+                          title={`Remove "${tag.name}"`}
                         >
-                          <span className="window-row__app">
-                            {w.appName || "Unknown"}
-                          </span>
-                          <span className="window-row__title">
-                            {w.title || "Untitled"}
-                          </span>
-                          <span className="window-row__state">
-                            {w.isFocused
-                              ? "Focused"
-                              : w.isFullscreen
-                                ? "Fullscreen"
-                                : w.isMaximized
-                                  ? "Maximized"
-                                  : "Visible"}
-                          </span>
+                          <span
+                            className="tag-chip__dot"
+                            style={{ background: tag.color }}
+                          />
+                          {tag.name}
+                          <span className="tag-chip__x">&times;</span>
+                        </button>
+                      );
+                    })}
+                    <div className="tag-picker-wrapper">
+                      <button
+                        className="tag-add-btn"
+                        onClick={() => setTagPickerOpen(!tagPickerOpen)}
+                      >
+                        +
+                      </button>
+                      {tagPickerOpen ? (
+                        <div className="tag-picker">
+                          {tagDefinitions.length === 0 ? (
+                            <span className="tag-picker__empty">
+                              No tags defined. Create tags in Settings.
+                            </span>
+                          ) : null}
+                          {tagDefinitions.map((tag) => (
+                            <button
+                              key={tag.id}
+                              className={`tag-picker__item ${selectedRecord.tags.includes(tag.id) ? "tag-picker__item--assigned" : ""}`}
+                              onClick={() => void addTagToScreenshot(tag.id)}
+                              disabled={selectedRecord.tags.includes(tag.id)}
+                            >
+                              <span
+                                className="tag-chip__dot"
+                                style={{ background: tag.color }}
+                              />
+                              {tag.name}
+                            </button>
+                          ))}
                         </div>
-                      ))}
+                      ) : null}
                     </div>
-                  ) : null}
+                  </div>
                 </>
               ) : (
                 <div className="empty-state">
-                  <span className="empty-state__title">No capture selected</span>
+                  <span className="empty-state__title">
+                    No capture selected
+                  </span>
                   <span className="empty-state__desc">
                     Select a capture from the list or take a new one.
                   </span>
@@ -961,12 +1086,120 @@ function ManagerApp() {
                   {recordingTarget === "region" ? "Press keys..." : "Record"}
                 </button>
               </div>
-              <div className="settings-row" style={{ justifyContent: "flex-end" }}>
+              <div
+                className="settings-row"
+                style={{ justifyContent: "flex-end" }}
+              >
                 <button
                   className="settings-btn settings-btn--primary"
                   onClick={saveHotkeys}
                 >
                   Save Hotkeys
+                </button>
+              </div>
+            </div>
+
+            <div className="settings-group">
+              <span className="settings-group__title">Tags</span>
+              {tagDefinitions.map((tag) => (
+                <div key={tag.id} className="settings-row">
+                  {editingTagId === tag.id ? (
+                    <>
+                      <div className="tag-edit-row">
+                        <div className="color-picker">
+                          {TAG_COLORS.map((c) => (
+                            <button
+                              key={c}
+                              className={`color-dot ${editTagColor === c ? "color-dot--active" : ""}`}
+                              style={{ background: c }}
+                              onClick={() => setEditTagColor(c)}
+                            />
+                          ))}
+                        </div>
+                        <input
+                          className="tag-name-input"
+                          value={editTagName}
+                          onChange={(e) => setEditTagName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              void handleRenameTag(tag.id);
+                            }
+                          }}
+                        />
+                      </div>
+                      <button
+                        className="settings-btn"
+                        onClick={() => void handleRenameTag(tag.id)}
+                      >
+                        Save
+                      </button>
+                      <button
+                        className="settings-btn"
+                        onClick={() => setEditingTagId(null)}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="settings-row__info">
+                        <span className="settings-row__label">
+                          <span
+                            className="tag-chip__dot"
+                            style={{ background: tag.color }}
+                          />
+                          {tag.name}
+                        </span>
+                      </div>
+                      <button
+                        className="settings-btn"
+                        onClick={() => {
+                          setEditingTagId(tag.id);
+                          setEditTagName(tag.name);
+                          setEditTagColor(tag.color);
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="settings-btn settings-btn--danger"
+                        onClick={() => void handleDeleteTag(tag.id)}
+                      >
+                        Delete
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+              <div className="settings-row">
+                <div className="tag-edit-row">
+                  <div className="color-picker">
+                    {TAG_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        className={`color-dot ${newTagColor === c ? "color-dot--active" : ""}`}
+                        style={{ background: c }}
+                        onClick={() => setNewTagColor(c)}
+                      />
+                    ))}
+                  </div>
+                  <input
+                    className="tag-name-input"
+                    value={newTagName}
+                    onChange={(e) => setNewTagName(e.target.value)}
+                    placeholder="New tag name"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        void handleCreateTag();
+                      }
+                    }}
+                  />
+                </div>
+                <button
+                  className="settings-btn settings-btn--primary"
+                  onClick={handleCreateTag}
+                >
+                  Create
                 </button>
               </div>
             </div>
@@ -1016,9 +1249,7 @@ function ManagerApp() {
             disabled={!selectedRecord}
             onClick={() =>
               selectedRecord
-                ? void invoke("open_screenshot", {
-                    path: selectedRecord.filePath,
-                  })
+                ? setViewerPath(selectedRecord.filePath)
                 : undefined
             }
           >
