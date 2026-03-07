@@ -648,32 +648,34 @@ fn open_file(path: &str) -> Result<(), String> {
 
 fn setup_auxiliary_windows(app: &AppHandle<Wry>) -> Result<(), String> {
     if app.get_webview_window(SELECTION_LABEL).is_none() {
-        WebviewWindowBuilder::new(app, SELECTION_LABEL, WebviewUrl::App("index.html".into()))
+        let builder =
+            WebviewWindowBuilder::new(app, SELECTION_LABEL, WebviewUrl::App("index.html".into()))
             .title("Flashbang Selection")
             .visible(false)
             .decorations(false)
-            .transparent(true)
             .always_on_top(true)
             .skip_taskbar(true)
             .shadow(false)
-            .resizable(false)
-            .build()
-            .map_err(app_err)?;
+            .resizable(false);
+        #[cfg(not(target_os = "macos"))]
+        let builder = builder.transparent(true);
+        builder.build().map_err(app_err)?;
     }
 
     if app.get_webview_window(FLASH_LABEL).is_none() {
-        WebviewWindowBuilder::new(app, FLASH_LABEL, WebviewUrl::App("index.html".into()))
+        let builder =
+            WebviewWindowBuilder::new(app, FLASH_LABEL, WebviewUrl::App("index.html".into()))
             .title("Flashbang Preview")
             .visible(false)
             .decorations(false)
-            .transparent(true)
             .always_on_top(true)
             .skip_taskbar(true)
             .shadow(false)
             .focused(false)
-            .resizable(false)
-            .build()
-            .map_err(app_err)?;
+            .resizable(false);
+        #[cfg(not(target_os = "macos"))]
+        let builder = builder.transparent(true);
+        builder.build().map_err(app_err)?;
     }
 
     Ok(())
