@@ -1111,6 +1111,13 @@ button {
     user-select: none;
 }
 
+.selection-dimmer {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    pointer-events: none;
+}
+
 .selection-hud {
     position: fixed;
     top: 14px;
@@ -1255,5 +1262,24 @@ button {
     100% {
         opacity: 0;
         transform: translate(-50%, 92px) scale(0.9);
+    }
+}
+
+.flash-shutter {
+    position: absolute;
+    inset: 0;
+    background: #fff;
+    animation: flash-shutter 200ms ease forwards;
+}
+
+@keyframes flash-shutter {
+    0% {
+        opacity: 0;
+    }
+    15% {
+        opacity: 0.85;
+    }
+    100% {
+        opacity: 0;
     }
 }

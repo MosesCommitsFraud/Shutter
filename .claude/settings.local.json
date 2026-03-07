@@ -20,7 +20,9 @@
       "Bash(pnpm add -D tailwindcss @tailwindcss/vite)",
       "Bash(pnpm approve-builds esbuild)",
       "Bash(node -e \":*)",
-      "Bash(pnpm build)"
+      "Bash(pnpm build)",
+      "Bash(pnpm tauri dev)",
+      "Bash(cargo clean)"
     ]
   }
 }

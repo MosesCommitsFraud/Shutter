@@ -570,6 +570,9 @@ function FlashOverlay() {
 
   return (
     <div className="flash-root" key={payload.seq}>
+      {payload.captureKind === "display" ? (
+        <div className="flash-shutter" />
+      ) : null}
       <div
         className="flash-bloom"
         style={{
@@ -650,6 +653,10 @@ function SelectionOverlay() {
     }
   };
 
+  const dimmerClipPath = selection
+    ? `polygon(0% 0%, 0% 100%, ${selection.left}px 100%, ${selection.left}px ${selection.top}px, ${selection.left + selection.width}px ${selection.top}px, ${selection.left + selection.width}px ${selection.top + selection.height}px, ${selection.left}px ${selection.top + selection.height}px, ${selection.left}px 100%, 100% 100%, 100% 0%)`
+    : undefined;
+
   return (
     <div
       className="selection-root"
@@ -676,6 +683,11 @@ function SelectionOverlay() {
         setCursor(null);
       }}
     >
+      <div
+        className="selection-dimmer"
+        style={dimmerClipPath ? { clipPath: dimmerClipPath } : undefined}
+      />
+
       <div className="selection-hud">
         <span className="selection-pill">Area Capture</span>
         <span className="selection-copy">

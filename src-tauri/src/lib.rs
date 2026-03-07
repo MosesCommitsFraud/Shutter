@@ -23,7 +23,7 @@ use models::{
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size, State, WebviewUrl,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Position, Size, State, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder, Wry,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -518,14 +518,15 @@ fn sync_window_to_display(
     display: &DisplayContext,
 ) -> Result<(), String> {
     window
-        .set_position(Position::Physical(PhysicalPosition::new(
-            display.x, display.y,
+        .set_position(Position::Logical(LogicalPosition::new(
+            display.x as f64,
+            display.y as f64,
         )))
         .map_err(app_err)?;
     window
-        .set_size(Size::Physical(PhysicalSize::new(
-            display.width,
-            display.height,
+        .set_size(Size::Logical(LogicalSize::new(
+            display.width as f64,
+            display.height as f64,
         )))
         .map_err(app_err)?;
     Ok(())
