@@ -8,7 +8,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -121,7 +121,7 @@ const currentWebview = getCurrentWebviewWindow();
 const currentWindow = getCurrentWindow();
 const viewLabel = currentWebview.label;
 const isMacOS = navigator.userAgent.includes("Mac");
-const EVENT_VIEWER_OPEN = "flashbang://viewer-open";
+const EVENT_VIEWER_OPEN = "shutter://viewer-open";
 const HEADER_DRAG_THRESHOLD = 6;
 
 type HeaderPointerState = {
@@ -367,11 +367,29 @@ function FullscreenViewer() {
     };
   }, []);
 
+  const [imageSrc, setImageSrc] = useState("");
+  const [showInfo, setShowInfo] = useState(false);
+
   const files = payload?.files ?? [];
   const currentIndex = payload?.currentIndex ?? 0;
   const currentPath = files[currentIndex] ?? null;
   const currentName = currentPath?.split(/[/\\]/).pop() ?? "";
-  const currentSrc = currentPath ? convertFileSrc(currentPath) : "";
+
+  useEffect(() => {
+    if (!currentPath) {
+      setImageSrc("");
+      return;
+    }
+    let cancelled = false;
+    void invoke<string>("load_preview_image", {
+      path: currentPath,
+      maxWidth: 3840,
+      maxHeight: 2160,
+    }).then((dataUrl) => {
+      if (!cancelled) setImageSrc(dataUrl);
+    });
+    return () => { cancelled = true; };
+  }, [currentPath]);
 
   const setIndex = (nextIndex: number) => {
     if (!payload || files.length === 0) {
@@ -413,6 +431,9 @@ function FullscreenViewer() {
           className="viewer-toolbar__btn"
           onClick={() => void invoke("hide_viewer")}
         >
+          <svg viewBox="0 0 20 20" width="16" height="16">
+            <path d="M13 4L7 10l6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+          </svg>
           Back
         </button>
         <div className="viewer-toolbar__meta">
@@ -422,6 +443,16 @@ function FullscreenViewer() {
           </span>
         </div>
         <div className="viewer-toolbar__actions">
+          <button
+            className="viewer-toolbar__btn viewer-toolbar__btn--icon"
+            onClick={() => setShowInfo(!showInfo)}
+            title="Info"
+          >
+            <svg viewBox="0 0 20 20" width="16" height="16">
+              <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.6" fill="none" />
+              <path d="M10 9v5M10 6.5v.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+          </button>
           <button
             className="viewer-toolbar__btn"
             onClick={() =>
@@ -441,16 +472,33 @@ function FullscreenViewer() {
         </div>
       </div>
 
+      {showInfo ? (
+        <div className="viewer-info">
+          <div className="viewer-info__row">
+            <span>File</span>
+            <span>{currentName}</span>
+          </div>
+          <div className="viewer-info__row">
+            <span>Path</span>
+            <span>{currentPath}</span>
+          </div>
+        </div>
+      ) : null}
+
       <button
         className="viewer-nav viewer-nav--prev"
         disabled={files.length <= 1}
         onClick={() => setIndex(currentIndex - 1)}
       >
-        ‹
+        <svg viewBox="0 0 24 24" width="18" height="18">
+          <path d="M15 6L9 12l6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        </svg>
       </button>
 
       <div className="viewer-stage">
-        <img className="viewer-image" src={currentSrc} alt={currentName} />
+        {imageSrc ? (
+          <img className="viewer-image" src={imageSrc} alt={currentName} />
+        ) : null}
       </div>
 
       <button
@@ -458,7 +506,9 @@ function FullscreenViewer() {
         disabled={files.length <= 1}
         onClick={() => setIndex(currentIndex + 1)}
       >
-        ›
+        <svg viewBox="0 0 24 24" width="18" height="18">
+          <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        </svg>
       </button>
     </div>
   );
@@ -500,7 +550,7 @@ function FlashOverlay() {
     let mounted = true;
     let unlisten: (() => void) | undefined;
 
-    void listen<FlashPreviewPayload>("flashbang://flash-preview", (event) => {
+    void listen<FlashPreviewPayload>("shutter://flash-preview", (event) => {
       if (mounted) {
         handlePreview(event.payload);
       }
@@ -710,7 +760,7 @@ function ManagerApp() {
     let unlistenClose: (() => void) | undefined;
 
     const setup = async () => {
-      unlistenLibrary = await listen("flashbang://library-updated", () => {
+      unlistenLibrary = await listen("shutter://library-updated", () => {
         void reloadState();
       });
 

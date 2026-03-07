@@ -38,9 +38,9 @@ const SELECTION_LABEL: &str = "selection_overlay";
 const FLASH_LABEL: &str = "flash_overlay";
 const VIEWER_LABEL: &str = "viewer_fullscreen";
 
-const EVENT_LIBRARY_UPDATED: &str = "flashbang://library-updated";
-const EVENT_FLASH_PREVIEW: &str = "flashbang://flash-preview";
-const EVENT_VIEWER_OPEN: &str = "flashbang://viewer-open";
+const EVENT_LIBRARY_UPDATED: &str = "shutter://library-updated";
+const EVENT_FLASH_PREVIEW: &str = "shutter://flash-preview";
+const EVENT_VIEWER_OPEN: &str = "shutter://viewer-open";
 
 const TRAY_OPEN_ID: &str = "open-manager";
 const TRAY_CAPTURE_ID: &str = "capture-display";
@@ -743,7 +743,7 @@ fn setup_auxiliary_windows(app: &AppHandle<Wry>) -> Result<(), String> {
     if app.get_webview_window(SELECTION_LABEL).is_none() {
         let builder =
             WebviewWindowBuilder::new(app, SELECTION_LABEL, WebviewUrl::App("index.html".into()))
-                .title("Flashbang Selection")
+                .title("Shutter Selection")
                 .visible(false)
                 .decorations(false)
                 .always_on_top(true)
@@ -758,7 +758,7 @@ fn setup_auxiliary_windows(app: &AppHandle<Wry>) -> Result<(), String> {
     if app.get_webview_window(FLASH_LABEL).is_none() {
         let builder =
             WebviewWindowBuilder::new(app, FLASH_LABEL, WebviewUrl::App("index.html".into()))
-                .title("Flashbang Preview")
+                .title("Shutter Preview")
                 .visible(false)
                 .decorations(false)
                 .always_on_top(true)
@@ -774,7 +774,7 @@ fn setup_auxiliary_windows(app: &AppHandle<Wry>) -> Result<(), String> {
     if app.get_webview_window(VIEWER_LABEL).is_none() {
         let builder =
             WebviewWindowBuilder::new(app, VIEWER_LABEL, WebviewUrl::App("index.html".into()))
-                .title("Flashbang Viewer")
+                .title("Shutter Viewer")
                 .visible(false)
                 .decorations(false)
                 .maximized(true)
@@ -798,7 +798,7 @@ fn setup_tray(app: &AppHandle<Wry>) -> Result<(), String> {
         .build()
         .map_err(app_err)?;
 
-    let mut tray = TrayIconBuilder::with_id("flashbang-tray")
+    let mut tray = TrayIconBuilder::with_id("shutter-tray")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {

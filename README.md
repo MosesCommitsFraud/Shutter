@@ -1,6 +1,6 @@
-# Flashbang
+# Shutter
 
-Flashbang is a Tauri desktop utility for background screenshots and lightweight screenshot management.
+Shutter is a Tauri desktop utility for background screenshots and lightweight screenshot management.
 
 ## Current scope
 
@@ -21,23 +21,12 @@ You can change both in the manager UI.
 ## Run in development
 
 ```bash
-npm install
-npm run tauri dev
+pnpm install
+pnpm tauri dev
 ```
 
 ## Build installers
 
 ```bash
-npm run tauri build
+pnpm tauri build
 ```
-
-Windows bundles are emitted under:
-
-- `src-tauri/target/release/bundle/msi/`
-- `src-tauri/target/release/bundle/nsis/`
-
-## Notes
-
-- The codebase is structured for Windows and macOS, but only Windows was built and verified in this workspace.
-- Global hotkeys and non-focus flash overlays are native. Area selection still requires an interactive overlay window.
-- Truly reliable capture over exclusive fullscreen games may still require deeper platform-specific native work beyond Tauri window overlays.

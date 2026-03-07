@@ -60,7 +60,7 @@ function syncMacIcons() {
     }
   }
 
-  const tempDir = mkdtempSync(join(tmpdir(), "flashbang-mac-icons-"));
+  const tempDir = mkdtempSync(join(tmpdir(), "shutter-mac-icons-"));
 
   try {
     const icnsImages = [

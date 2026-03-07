@@ -8,8 +8,8 @@ use directories::{ProjectDirs, UserDirs};
 use crate::models::{PersistedState, ScreenshotRecord};
 
 const ORG_QUALIFIER: &str = "com";
-const ORG_NAME: &str = "Flashbang";
-const APP_NAME: &str = "Flashbang";
+const ORG_NAME: &str = "Shutter";
+const APP_NAME: &str = "Shutter";
 const STATE_FILE: &str = "state.json";
 
 fn project_dirs() -> Result<ProjectDirs, String> {
@@ -21,9 +21,9 @@ pub fn default_save_dir() -> Result<PathBuf, String> {
     let user_dirs =
         UserDirs::new().ok_or_else(|| String::from("Unable to resolve user directories"))?;
     if let Some(pictures_dir) = user_dirs.picture_dir() {
-        Ok(pictures_dir.join("Flashbang"))
+        Ok(pictures_dir.join("Shutter"))
     } else {
-        Ok(user_dirs.home_dir().join("Pictures").join("Flashbang"))
+        Ok(user_dirs.home_dir().join("Pictures").join("Shutter"))
     }
 }
 
