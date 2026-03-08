@@ -57,6 +57,8 @@ pub struct ScreenshotRecord {
     pub id: String,
     pub file_name: String,
     pub file_path: String,
+    #[serde(default)]
+    pub thumbnail_path: Option<String>,
     pub created_at: String,
     pub capture_kind: CaptureKind,
     pub width: u32,

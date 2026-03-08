@@ -26,7 +26,8 @@
       "Bash(pnpm add -D @resvg/resvg-js)",
       "Bash(node scripts/sync-icons.mjs)",
       "Bash(pnpm tauri icon public/logo.png)",
-      "Bash(cargo build --manifest-path src-tauri/Cargo.toml)"
+      "Bash(cargo build --manifest-path src-tauri/Cargo.toml)",
+      "Bash(pnpm tauri build)"
     ]
   }
 }

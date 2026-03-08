@@ -14,7 +14,9 @@ use std::{
 use arboard::{Clipboard, ImageData};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::Local;
-use image::{DynamicImage, ImageFormat, RgbaImage};
+use image::codecs::jpeg::JpegEncoder;
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+use image::{DynamicImage, ImageEncoder, ImageFormat, RgbaImage};
 use models::{
     AppConfig, BootstrapPayload, CaptureKind, DisplayContext, FlashPreviewPayload, HotkeyConfig,
     PendingSelection, PersistedState, RegionCaptureRequest, ScreenshotRecord, ViewerPayload,
@@ -476,19 +478,46 @@ fn save_capture(
         &id[..8]
     );
     let file_path = save_dir.join(&file_name);
+    let img_width = image.width();
+    let img_height = image.height();
 
-    DynamicImage::ImageRgba8(image.clone())
-        .save(&file_path)
-        .map_err(app_err)?;
+    // Save full PNG with fast compression (avoids blocking the main thread for too long)
+    {
+        let out = std::io::BufWriter::new(fs::File::create(&file_path).map_err(app_err)?);
+        let encoder = PngEncoder::new_with_quality(out, CompressionType::Fast, FilterType::Sub);
+        encoder
+            .write_image(image.as_raw(), img_width, img_height, image::ColorType::Rgba8.into())
+            .map_err(app_err)?;
+    }
+
+    // Generate a JPEG thumbnail for fast UI display
+    let thumb_name = format!(
+        "{}-{}-{}-{}.thumb.jpg",
+        created_at.format("%Y%m%d-%H%M%S"),
+        suffix,
+        slug,
+        &id[..8]
+    );
+    let thumb_path = save_dir.join(&thumb_name);
+    let thumb = DynamicImage::ImageRgba8(image).thumbnail(960, 640);
+    {
+        let rgb = thumb.to_rgb8();
+        let out = std::io::BufWriter::new(fs::File::create(&thumb_path).map_err(app_err)?);
+        let mut encoder = JpegEncoder::new_with_quality(out, 85);
+        encoder
+            .encode_image(&rgb)
+            .map_err(app_err)?;
+    }
 
     let record = ScreenshotRecord {
         id,
         file_name,
         file_path: file_path.to_string_lossy().to_string(),
+        thumbnail_path: Some(thumb_path.to_string_lossy().to_string()),
         created_at: created_at.to_rfc3339(),
         capture_kind,
-        width: image.width(),
-        height: image.height(),
+        width: img_width,
+        height: img_height,
         primary_app: target.primary_app.clone(),
         tags: Vec::new(),
         display: target.display.clone(),
@@ -558,7 +587,7 @@ fn show_flash_preview(
         let mut runtime = app_state.inner.lock().map_err(app_err)?;
         runtime.flash_seq += 1;
         FlashPreviewPayload {
-            file_path: record.file_path.clone(),
+            file_path: record.thumbnail_path.clone().unwrap_or_else(|| record.file_path.clone()),
             seq: runtime.flash_seq,
             flash_opacity: runtime.persisted.config.flash_opacity,
             primary_app: record.primary_app.clone(),

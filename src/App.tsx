@@ -8,7 +8,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -61,6 +61,7 @@ type ScreenshotRecord = {
   id: string;
   fileName: string;
   filePath: string;
+  thumbnailPath: string | null;
   createdAt: string;
   captureKind: CaptureKind;
   width: number;
@@ -116,7 +117,7 @@ const TAG_COLORS = [
 ];
 
 const PAGE_SIZE = 50;
-const previewCache = new Map<string, string>();
+const assetSrcCache = new Map<string, string>();
 const currentWebview = getCurrentWebviewWindow();
 const currentWindow = getCurrentWindow();
 const viewLabel = currentWebview.label;
@@ -221,61 +222,17 @@ function isHeaderControlTarget(target: EventTarget | null): boolean {
   );
 }
 
-function usePreviewImage(
-  path: string | null,
-  maxWidth: number,
-  maxHeight: number,
-) {
-  const [src, setSrc] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!path) {
-      setSrc("");
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const cacheKey = `${path}::${maxWidth}x${maxHeight}`;
-    const cached = previewCache.get(cacheKey);
-    if (cached) {
-      setSrc(cached);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    setSrc("");
-
-    void invoke<string>("load_preview_image", {
-      path,
-      maxWidth,
-      maxHeight,
-    })
-      .then((dataUrl) => {
-        if (!cancelled) {
-          previewCache.set(cacheKey, dataUrl);
-          setSrc(dataUrl);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSrc("");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [path, maxHeight, maxWidth]);
-
+function useAssetSrc(path: string | null) {
+  if (!path) return "";
+  const cached = assetSrcCache.get(path);
+  if (cached) return cached;
+  const src = convertFileSrc(path);
+  assetSrcCache.set(path, src);
   return src;
 }
 
 function ListThumb(props: { path: string | null; app: string }) {
-  const src = usePreviewImage(props.path, 192, 128);
+  const src = useAssetSrc(props.path);
 
   if (!src) {
     return (
@@ -293,7 +250,7 @@ function DetailPreview(props: {
   alt: string;
   onClick: () => void;
 }) {
-  const src = usePreviewImage(props.path, 1920, 1080);
+  const src = useAssetSrc(props.path);
 
   if (!src) {
     return (
@@ -367,29 +324,13 @@ function FullscreenViewer() {
     };
   }, []);
 
-  const [imageSrc, setImageSrc] = useState("");
   const [showInfo, setShowInfo] = useState(false);
 
   const files = payload?.files ?? [];
   const currentIndex = payload?.currentIndex ?? 0;
   const currentPath = files[currentIndex] ?? null;
   const currentName = currentPath?.split(/[/\\]/).pop() ?? "";
-
-  useEffect(() => {
-    if (!currentPath) {
-      setImageSrc("");
-      return;
-    }
-    let cancelled = false;
-    void invoke<string>("load_preview_image", {
-      path: currentPath,
-      maxWidth: 3840,
-      maxHeight: 2160,
-    }).then((dataUrl) => {
-      if (!cancelled) setImageSrc(dataUrl);
-    });
-    return () => { cancelled = true; };
-  }, [currentPath]);
+  const imageSrc = useAssetSrc(currentPath);
 
   const setIndex = (nextIndex: number) => {
     if (!payload || files.length === 0) {
@@ -515,7 +456,7 @@ function FullscreenViewer() {
 }
 
 function FlashPreviewImage(props: { path: string | null }) {
-  const src = usePreviewImage(props.path, 960, 560);
+  const src = useAssetSrc(props.path);
 
   if (!src) {
     return null;
@@ -1190,7 +1131,7 @@ function ManagerApp() {
                   className={`list-item ${selectedRecord?.id === record.id ? "list-item--selected" : ""}`}
                   onClick={() => setSelectedId(record.id)}
                 >
-                  <ListThumb path={record.filePath} app={record.primaryApp} />
+                  <ListThumb path={record.thumbnailPath ?? record.filePath} app={record.primaryApp} />
                   <div className="list-item__info">
                     <span className="list-item__title">
                       {record.activeWindow?.title || record.primaryApp}
