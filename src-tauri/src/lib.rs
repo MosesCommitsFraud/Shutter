@@ -66,6 +66,7 @@ struct AppState {
 struct RuntimeState {
     persisted: PersistedState,
     pending_selection: Option<PendingSelection>,
+    frozen_image: Option<RgbaImage>,
     flash_seq: u64,
     viewer_payload: Option<ViewerPayload>,
 }
@@ -598,6 +599,7 @@ fn capture_display(app: &AppHandle<Wry>, app_state: &AppState) -> Result<(), Str
 
 fn begin_region_capture_inner(app: &AppHandle<Wry>, app_state: &AppState) -> Result<(), String> {
     let target = resolve_capture_target()?;
+    let frozen = target.monitor.capture_image().map_err(app_err)?;
     {
         let mut runtime = app_state.inner.lock().map_err(app_err)?;
         runtime.pending_selection = Some(PendingSelection {
@@ -605,6 +607,7 @@ fn begin_region_capture_inner(app: &AppHandle<Wry>, app_state: &AppState) -> Res
             active_window: target.active_window.clone(),
             visible_windows: target.visible_windows.clone(),
         });
+        runtime.frozen_image = Some(frozen);
     }
 
     let overlay = app
@@ -938,6 +941,7 @@ fn cancel_region_capture(app: AppHandle<Wry>, state: State<'_, AppState>) -> Res
     {
         let mut runtime = state.inner.lock().map_err(app_err)?;
         runtime.pending_selection = None;
+        runtime.frozen_image = None;
     }
     if let Some(window) = app.get_webview_window(SELECTION_LABEL) {
         window.hide().map_err(app_err)?;
@@ -951,11 +955,14 @@ fn capture_region(
     state: State<'_, AppState>,
     request: RegionCaptureRequest,
 ) -> Result<(), String> {
-    let pending = {
+    let (pending, frozen) = {
         let mut runtime = state.inner.lock().map_err(app_err)?;
-        runtime.pending_selection.take()
-    }
-    .ok_or_else(|| String::from("No region capture is currently active"))?;
+        let p = runtime.pending_selection.take();
+        let f = runtime.frozen_image.take();
+        (p, f)
+    };
+    let pending = pending.ok_or_else(|| String::from("No region capture is currently active"))?;
+    let frozen = frozen.ok_or_else(|| String::from("No frozen frame available"))?;
 
     if let Some(window) = app.get_webview_window(SELECTION_LABEL) {
         let _ = window.hide();
@@ -978,9 +985,7 @@ fn capture_region(
     let clamped_width = width.min(max_width).max(1);
     let clamped_height = height.min(max_height).max(1);
 
-    let image = monitor
-        .capture_region(x, y, clamped_width, clamped_height)
-        .map_err(app_err)?;
+    let image = image::imageops::crop_imm(&frozen, x, y, clamped_width, clamped_height).to_image();
     let target = CaptureTarget {
         monitor,
         display: pending.display.clone(),
@@ -1190,6 +1195,7 @@ pub fn run() {
         inner: Mutex::new(RuntimeState {
             persisted,
             pending_selection: None,
+            frozen_image: None,
             flash_seq: 0,
             viewer_payload: None,
         }),
