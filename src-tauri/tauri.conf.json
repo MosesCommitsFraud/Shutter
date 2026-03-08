@@ -26,7 +26,8 @@
           "y": 30
         },
         "visible": false,
-        "center": true
+        "center": true,
+        "contentProtected": true
       }
     ],
     "security": {

@@ -766,6 +766,7 @@ fn setup_auxiliary_windows(app: &AppHandle<Wry>) -> Result<(), String> {
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .shadow(false)
+                .content_protected(true)
                 .resizable(false);
         #[cfg(not(target_os = "macos"))]
         let builder = builder.transparent(true);
@@ -782,6 +783,7 @@ fn setup_auxiliary_windows(app: &AppHandle<Wry>) -> Result<(), String> {
                 .skip_taskbar(true)
                 .shadow(false)
                 .focused(false)
+                .content_protected(true)
                 .resizable(false);
         #[cfg(not(target_os = "macos"))]
         let builder = builder.transparent(true);
@@ -796,6 +798,7 @@ fn setup_auxiliary_windows(app: &AppHandle<Wry>) -> Result<(), String> {
                 .decorations(false)
                 .maximized(true)
                 .focused(true)
+                .content_protected(true)
                 .resizable(false);
         #[cfg(not(target_os = "macos"))]
         let builder = builder.transparent(false);
