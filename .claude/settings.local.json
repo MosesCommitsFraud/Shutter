@@ -22,7 +22,10 @@
       "Bash(node -e \":*)",
       "Bash(pnpm build)",
       "Bash(pnpm tauri dev)",
-      "Bash(cargo clean)"
+      "Bash(cargo clean)",
+      "Bash(pnpm add -D @resvg/resvg-js)",
+      "Bash(node scripts/sync-icons.mjs)",
+      "Bash(pnpm tauri icon public/logo.png)"
     ]
   }
 }

@@ -4,6 +4,13 @@ import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+const isMac = process.platform === "darwin";
+
+let Resvg;
+if (!isMac) {
+  ({ Resvg } = await import("@resvg/resvg-js"));
+}
+
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const macIconDir = resolve(repoRoot, "public/macIcon");
 const windowsLogoSvg = resolve(repoRoot, "public/logo.svg");
@@ -49,7 +56,7 @@ const windowsIcoSizes = [16, 32, 48, 64, 128, 256];
 
 mkdirSync(tauriIconsDir, { recursive: true });
 
-syncMacIcons();
+if (isMac) syncMacIcons();
 syncWindowsIcons();
 
 function syncMacIcons() {
@@ -116,6 +123,14 @@ function prepareMacIcon(inputPath, outputPath, size) {
 }
 
 function renderImageToPng(inputPath, outputPath, size, scale) {
+  if (isMac) {
+    renderImageToPngSwift(inputPath, outputPath, size, scale);
+  } else {
+    renderSvgToPngResvg(inputPath, outputPath, size);
+  }
+}
+
+function renderImageToPngSwift(inputPath, outputPath, size, scale) {
   const swiftSource = `
 import AppKit
 import Foundation
@@ -163,6 +178,15 @@ try pngData.write(to: URL(fileURLWithPath: outputPath))
     },
     stdio: "inherit",
   });
+}
+
+function renderSvgToPngResvg(inputPath, outputPath, size) {
+  const svgData = readFileSync(inputPath);
+  const resvg = new Resvg(svgData, {
+    fitTo: { mode: "width", value: size },
+  });
+  const png = resvg.render();
+  writeFileSync(outputPath, png.asPng());
 }
 
 function buildIco(pngBuffers, sizes) {
