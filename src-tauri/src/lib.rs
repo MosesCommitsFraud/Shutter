@@ -23,8 +23,8 @@ use models::{
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Position, Size, State, WebviewUrl,
-    WebviewWindow, WebviewWindowBuilder, Wry,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
+    Position, Size, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use uuid::Uuid;
@@ -517,18 +517,34 @@ fn sync_window_to_display(
     window: &WebviewWindow<Wry>,
     display: &DisplayContext,
 ) -> Result<(), String> {
-    window
-        .set_position(Position::Logical(LogicalPosition::new(
-            display.x as f64,
-            display.y as f64,
-        )))
-        .map_err(app_err)?;
-    window
-        .set_size(Size::Logical(LogicalSize::new(
-            display.width as f64,
-            display.height as f64,
-        )))
-        .map_err(app_err)?;
+    // xcap returns physical pixels on Windows, logical points on macOS
+    if cfg!(target_os = "macos") {
+        window
+            .set_position(Position::Logical(LogicalPosition::new(
+                display.x as f64,
+                display.y as f64,
+            )))
+            .map_err(app_err)?;
+        window
+            .set_size(Size::Logical(LogicalSize::new(
+                display.width as f64,
+                display.height as f64,
+            )))
+            .map_err(app_err)?;
+    } else {
+        window
+            .set_position(Position::Physical(PhysicalPosition::new(
+                display.x,
+                display.y,
+            )))
+            .map_err(app_err)?;
+        window
+            .set_size(Size::Physical(PhysicalSize::new(
+                display.width,
+                display.height,
+            )))
+            .map_err(app_err)?;
+    }
     Ok(())
 }
 
